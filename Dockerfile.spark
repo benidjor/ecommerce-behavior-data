@@ -1,0 +1,40 @@
+FROM bitnami/spark:3.5.4
+
+USER 0
+
+# 필요한 패키지 설치
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3-pip \
+    curl \
+    && pip3 install pyspark==3.5.4 \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# 하둡-aws 및 aws-sdk 추가 (S3 연동 설정)
+RUN mkdir -p /opt/bitnami/spark/jars && \
+    curl -o /opt/bitnami/spark/jars/hadoop-aws-3.3.2.jar \
+    https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/3.3.2/hadoop-aws-3.3.2.jar && \
+    curl -o /opt/bitnami/spark/jars/aws-java-sdk-bundle-1.11.901.jar \
+    https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/1.11.901/aws-java-sdk-bundle-1.11.901.jar
+
+# Spark 컨테이너 내부에서 conf 디렉토리 생성 후 권한 설정
+RUN mkdir -p /opt/bitnami/spark/conf && \
+    echo "LD_PRELOAD=/opt/bitnami/common/lib/libnss_wrapper.so" > /opt/bitnami/spark/conf/spark-env.sh && \
+    chmod 755 /opt/bitnami/spark/conf/spark-env.sh && \
+    chown -R 1001:1001 /opt/bitnami/spark/conf
+
+# 로컬에서도 conf 디렉토리를 자동으로 생성
+RUN mkdir -p /sources/spark/conf
+
+
+# spark-defaults.conf 설정 (S3A 파일시스템 사용)
+RUN echo "spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem" >> /opt/bitnami/spark/conf/spark-defaults.conf && \
+    echo "spark.hadoop.fs.s3a.aws.credentials.provider=org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider" >> /opt/bitnami/spark/conf/spark-defaults.conf && \
+    echo "spark.driver.extraClassPath /opt/bitnami/spark/jars/*" >> /opt/bitnami/spark/conf/spark-defaults.conf && \
+    echo "spark.executor.extraClassPath /opt/bitnami/spark/jars/*" >> /opt/bitnami/spark/conf/spark-defaults.conf
+
+# 환경 변수 설정
+ENV PYSPARK_PYTHON=python3
+ENV SPARK_DIST_CLASSPATH=/opt/bitnami/spark/jars/*
+
+# 기본 사용자 변경 (보안 강화)
+USER 1001
