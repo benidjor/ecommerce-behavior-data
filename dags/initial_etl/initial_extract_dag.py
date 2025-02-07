@@ -2,7 +2,7 @@ from airflow.decorators import task, dag
 from airflow.hooks.base import BaseHook
 from airflow.providers.amazon.aws.hooks.base_aws import AwsBaseHook
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import first, col, count, sum, round, countDistinct, lit, coalesce, row_number, to_date
+from pyspark.sql.functions import first, col, count, sum, round, countDistinct, lit, coalesce, row_number, to_date, date_format
 from pyspark.sql.dataframe import DataFrame as SparkDataFrame
 
 from datetime import datetime, timedelta
@@ -11,6 +11,7 @@ import pandas as pd
 import os
 from io import BytesIO
 import logging
+from functools import reduce
 import psutil # 메모리 및 CPU 사용량 확인을 위한 라이브러리
 import pyarrow.parquet as pq
 
@@ -113,6 +114,24 @@ def upload_to_s3(df: SparkDataFrame, start_date: str):
 
     except Exception as e:
         logger.error(f"일주일 ({start_date} ~ {end_date}) 데이터 업로드 중 오류 발생: {e}", exc_info=True)
+
+
+
+def making_columns_for_transform(df: SparkDataFrame, event_col: str) -> SparkDataFrame:
+    """
+    event_time 컬럼을 바탕으로, 월, 일, 시, 요일 파생 컬럼 생성
+    """
+    transformations = {
+        "event_time_month": "MM",      # 월
+        "event_time_day": "dd",        # 일
+        "event_time_hour": "HH",       # 시
+        "event_time_day_name": "E"     # 요일
+    }
+
+    df = reduce(lambda acc, col_format: acc.withColumn(col_format[0], date_format(event_col, col_format[1])),
+                transformations.items(), df)
+
+    return df
 
 
 @task

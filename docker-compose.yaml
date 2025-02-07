@@ -246,6 +246,7 @@ services:
     volumes:
       - ./spark:/opt/spark
       - ./spark/conf:/opt/bitnami/spark/conf
+      - ./data:/opt/airflow/data
     user: "1001:1001"  # 👈 spark 사용자가 실행하도록 설정
     depends_on:
       - redis
@@ -275,6 +276,7 @@ services:
     volumes:
       - ./spark:/opt/spark
       - ./spark/conf:/opt/bitnami/spark/conf
+      - ./data:/opt/airflow/data
     user: "1001:1001"
     depends_on:
       - spark-master
