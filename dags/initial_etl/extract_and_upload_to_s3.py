@@ -28,7 +28,12 @@ def get_spark_session(aws_access_key, aws_secret_key):
 
     spark.sparkContext.setLogLevel("WARN")
 
+    # SparkSession Time Zone을 UTC로 설정
+    spark.conf.set("spark.sql.session.timeZone", "UTC")
+    logger.info(f"Current TimeZone: {spark.conf.get("spark.sql.session.timeZone")}")
+
     return spark
+
 
 def set_filtering_date(weekly_start_date: str="2019-10-01", weekly_end_date: str="2020-01-04", freq: str="7D") -> dict:
     weekly_dict = {
@@ -40,6 +45,7 @@ def set_filtering_date(weekly_start_date: str="2019-10-01", weekly_end_date: str
     }
 
     return weekly_dict
+
 
 def filter_by_date(spark, input_local_path, start_date, end_date):
     """
@@ -67,61 +73,6 @@ def filter_by_date(spark, input_local_path, start_date, end_date):
         logger.error(f"파일 처리 중 오류 발생: {e}")
         return None
 
-# def upload_to_s3(df, start_date, output_s3_raw_path):
-#     """
-#     Spark DataFrame을 직접 S3에 Parquet 형식으로 저장하는 함수
-#     """
-#     # 1️. 종료 날짜 계산
-#     end_date = (datetime.strptime(start_date, "%Y-%m-%d") + timedelta(days=6)).strftime("%Y-%m-%d")
-
-#     # 2️. S3 저장 경로 설정 (YYMMDD 형식)
-#     transformed_key = datetime.strptime(start_date, "%Y-%m-%d").strftime("%y%m%d")
-#     s3_path = f"s3a://{S3_BUCKET_NAME}/{output_s3_raw_path}/{transformed_key}/"
-
-#     try:
-#         logger.info(f"일주일 ({start_date} ~ {end_date}) 데이터를 S3에 저장합니다 ({s3_path})")
-#         # 3️. Spark DataFrame을 S3에 직접 저장
-#         df.write.mode("overwrite").parquet(s3_path)
-#         logger.info(f"일주일 ({start_date} ~ {end_date}) 데이터 업로드 완료.")
-
-#     except Exception as e:
-#         logger.error(f"일주일 ({start_date} ~ {end_date}) 데이터 업로드 중 오류 발생: {e}", exc_info=True)
-
-# def s3_path_exists(bucket_name, prefix, aws_access_key, aws_secret_key):
-#     """ S3 경로가 존재하는지 확인하는 함수 """
-#     s3 = boto3.client('s3', aws_access_key_id=aws_access_key, aws_secret_access_key=aws_secret_key)
-    
-#     response = s3.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
-#     return 'Contents' in response  # 객체가 존재하면 True
-
-# def upload_to_s3(df, start_date, output_s3_raw_path, aws_access_key, aws_secret_key):
-#     """
-#     Spark DataFrame을 S3에 Parquet 형식으로 저장하되,
-#     해당 경로가 존재하면 저장을 건너뛴다.
-#     """
-#     # 1️. 종료 날짜 계산
-#     end_date = (datetime.strptime(start_date, "%Y-%m-%d") + timedelta(days=6)).strftime("%Y-%m-%d")
-
-#     # 2️. S3 저장 경로 설정 (YYMMDD 형식)
-#     transformed_key = datetime.strptime(start_date, "%Y-%m-%d").strftime("%y%m%d")
-#     s3_prefix = f"{output_s3_raw_path}/{transformed_key}/"
-
-#     # 3. S3 경로 존재 여부 확인
-#     if s3_path_exists(S3_BUCKET_NAME, s3_prefix, aws_access_key, aws_secret_key):
-#         logger.info(f"S3 경로가 이미 존재하므로 업로드를 건너뜁니다: s3://{S3_BUCKET_NAME}/{s3_prefix}")
-#         return
-
-#     try:
-#         # 4. Spark DataFrame을 S3에 직접 저장
-#         s3_path = f"s3a://{S3_BUCKET_NAME}/{s3_prefix}"
-#         logger.info(f"일주일 ({start_date} ~ {end_date}) 데이터를 S3에 저장합니다 ({s3_path})")
-        
-#         df.write.mode("overwrite").parquet(s3_path)
-        
-#         logger.info(f"일주일 ({start_date} ~ {end_date}) 데이터 업로드 완료.")
-    
-#     except Exception as e:
-#         logger.error(f"일주일 ({start_date} ~ {end_date}) 데이터 업로드 중 오류 발생: {e}", exc_info=True)
 
 def detect_date_format(date_str):
     """ 주어진 날짜가 'YYYY-MM-DD'인지 'YYMMDD'인지 판별 후 datetime 객체로 변환 """
@@ -137,12 +88,14 @@ def detect_date_format(date_str):
     except ValueError:
         raise ValueError(f"올바른 날짜 형식이 아닙니다: {date_str} (YYYY-MM-DD 또는 YYMMDD만 허용됨)")
 
+
 def s3_path_exists(bucket_name, prefix, aws_access_key, aws_secret_key):
     """ S3 경로가 존재하는지 확인하는 함수 """
     s3 = boto3.client('s3', aws_access_key_id=aws_access_key, aws_secret_access_key=aws_secret_key)
     
     response = s3.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
     return 'Contents' in response  # 객체가 존재하면 True
+
 
 def upload_to_s3(df, start_date, output_s3_raw_path, aws_access_key, aws_secret_key):
     """
@@ -176,6 +129,7 @@ def upload_to_s3(df, start_date, output_s3_raw_path, aws_access_key, aws_secret_
     
     except Exception as e:
         logger.error(f"일주일 ({start_date} ~ {end_date}) 데이터 업로드 중 오류 발생: {e}", exc_info=True)
+
 
 def main(input_local_path, output_s3_raw_path, aws_access_key, aws_secret_key, start_date, end_date):
 
