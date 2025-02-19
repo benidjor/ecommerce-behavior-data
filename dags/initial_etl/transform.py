@@ -80,22 +80,44 @@ def list_s3_folders(bucket_name, prefix, aws_access_key, aws_secret_key):
         return []
     
 
+# def seperate_category_code(df, category_code="category_code"):
+#     """
+#     category_code 컬럼을 "." 단위로 나누어, 대분류, 중분류, 소분류로 분리
+#     """
+#     # Split 결과를 배열로 저장
+#     category_split_col = F.split(F.col(category_code), "\\.")
+
+#     # 컬럼 추가
+#     df = df.withColumns(
+#         {
+#             "category_lv_1": category_split_col.getItem(0),
+#             "category_lv_2": F.when(category_split_col.getItem(1).isNotNull(), category_split_col.getItem(1)).otherwise("none"),
+#             "category_lv_3": F.when(category_split_col.getItem(2).isNotNull(), category_split_col.getItem(2)).otherwise("none")
+#         }
+#     )
+
+#     return df
+
 def seperate_category_code(df, category_code="category_code"):
     """
-    category_code 컬럼을 "." 단위로 나누어, 대분류, 중분류, 소분류로 분리
+    category_code 컬럼을 "." 단위로 분리하여, 
+    대분류(category_lv_1), 중분류(category_lv_2), 소분류(category_lv_3)로 나누는 함수입니다.
+    만약 category_code가 "unknown"인 경우, 모든 레벨을 "unknown"으로 처리합니다.
     """
-    # Split 결과를 배열로 저장
-    category_split_col = F.split(F.col(category_code), "\\.")
-
-    # 컬럼 추가
-    df = df.withColumns(
-        {
-            "category_lv_1": category_split_col.getItem(0),
-            "category_lv_2": F.when(category_split_col.getItem(1).isNotNull(), category_split_col.getItem(1)).otherwise("None"),
-            "category_lv_3": F.when(category_split_col.getItem(2).isNotNull(), category_split_col.getItem(2)).otherwise("None")
-        }
-    )
-
+    split_col = F.split(F.col(category_code), "\\.")
+    levels = [("category_lv_1", None), ("category_lv_2", "none"), ("category_lv_3", "none")]
+    
+    for i, (col_name, default_val) in enumerate(levels):
+        # category_code가 "unknown"이면 무조건 "unknown"으로 처리
+        # 그렇지 않은 경우, 해당 인덱스의 값이 있으면 사용하고, 없으면(default_val이 설정되어 있으면) default_val 사용
+        df = df.withColumn(
+            col_name,
+            F.when(F.col(category_code) == "unknown", F.lit("unknown"))
+             .otherwise(
+                 F.coalesce(split_col.getItem(i), F.lit(default_val)) if default_val is not None 
+                 else split_col.getItem(i)
+             )
+        )
     return df
 
 
@@ -164,25 +186,74 @@ def impute_by_mode_value(df: DataFrame, group_col: str, target_col: str) -> Data
     
     return df_imputed
 
+# def drop_null_and_reorder_cols(df, prefix, new_column_order):
+#     """
+#     결측치를 제거하고 Spark DataFrame의 컬럼 순서 변경
+#     """
+#     # 결측치 처리
+#     before_drop = df.count()
+#     df = df.na.drop()
+#     after_drop = df.count()
+#     dropped_rows = before_drop - after_drop
+#     logger.info(f"{prefix}에서 {before_drop}개 행 중 {dropped_rows}개의 결측치 행 제거.")
 
-def drop_null_and_reorder_cols(df, prefix, new_column_order):
-    """
-    결측치를 제거하고 Spark DataFrame의 컬럼 순서 변경
-    """
-    # 결측치 처리
-    before_drop = df.count()
-    df = df.na.drop()
-    after_drop = df.count()
-    dropped_rows = before_drop - after_drop
-    logger.info(f"{prefix}에서 {before_drop}개 행 중 {dropped_rows}개의 결측치 행 제거.")
+#     # 입력된 컬럼 리스트가 실제 컬럼과 일치하는지 확인
+#     if set(new_column_order) != set(df.columns):
+#         raise ValueError("입력한 컬럼 리스트가 DataFrame의 컬럼과 일치하지 않습니다.")
 
-    # 입력된 컬럼 리스트가 실제 컬럼과 일치하는지 확인
+#     df = df.select([F.col(c) for c in new_column_order])
+
+#     return df
+
+def impute_by_unknown(df, prefix):
+    """
+    모든 결측치를 "unknown"으로 대체하고, 
+    각 컬럼별 결측치 개수와 결측치가 있는 행(row)의 갯수를 로그로 출력한 후,
+    Spark DataFrame의 컬럼 순서를 변경하는 함수.
+    
+    Parameters:
+    - df: 입력 Spark DataFrame
+    - prefix: 로그 메시지에 사용될 접두어
+    - new_column_order: 재정렬할 컬럼 순서 리스트
+    
+    return: 결측치가 "unknown"으로 대체되고, 컬럼 순서가 재정렬된 DataFrame
+    """
+    # 1. 각 컬럼별 결측치 개수 계산
+    col_null_counts = (
+        df.select([F.sum(F.col(c).isNull().cast("int")).alias(c) for c in df.columns])
+          .collect()[0]
+          .asDict()
+    )
+    # 로그: 컬럼별 결측치 개수 출력
+    for col_name, null_count in col_null_counts.items():
+        logger.info(f"{prefix} - {col_name}: {null_count}개의 결측치 존재.")
+
+    # 전체 셀 단위 결측치 총합
+    total_nulls = sum(col_null_counts.values())
+    logger.info(f"{prefix} - 전체 결측치 개수 (셀 단위): {total_nulls}")
+
+    # 2. 결측치가 포함된 행(row) 수 계산
+    total_rows = df.count()
+    rows_with_null = df.filter(
+        F.array_contains(F.array(*[F.when(F.col(c).isNull(), F.lit(1)).otherwise(F.lit(0)) for c in df.columns]), 1)
+    ).count()
+    logger.info(f"{prefix} - 전체 {total_rows}개 행 중, 결측치가 포함된 행: {rows_with_null}개.")
+
+    # 3. 모든 결측치를 "unknown"으로 대체
+    df = df.na.fill("unknown")
+    
+    return df
+
+def reorder_cols(df, new_column_order):
+    # 4. 입력된 컬럼 리스트가 실제 컬럼과 일치하는지 확인
     if set(new_column_order) != set(df.columns):
         raise ValueError("입력한 컬럼 리스트가 DataFrame의 컬럼과 일치하지 않습니다.")
-
+    
+    # 5. 컬럼 순서 재정렬
     df = df.select([F.col(c) for c in new_column_order])
 
     return df
+
 
 
 def detect_date_format(date_str):
@@ -266,14 +337,8 @@ def main(output_s3_processed_path, aws_access_key, aws_secret_key, start_date, e
         # parquet 데이터 읽기
         weekly_raw_df = spark.read.parquet(parquet_prefix)
 
-        # category_code 컬럼 분리
-        weekly_cat_code_seperated_df = seperate_category_code(weekly_raw_df)
-
-        # event_time 컬럼 분리
-        weekly_event_time_seperated_df = separate_event_time_col(weekly_cat_code_seperated_df)
-
         # 결측치 처리: category_id를 기준으로 category_code 결측치 대체
-        imputed_cat_df = impute_by_mode_value(weekly_event_time_seperated_df, "category_id", "category_code")
+        imputed_cat_df = impute_by_mode_value(weekly_raw_df, "category_id", "category_code")
 
         # 결측치 처리: product_id를 기준으로 category_code 결측치 대체
         imputed_cat_df = impute_by_mode_value(imputed_cat_df, "product_id", "category_code")
@@ -284,8 +349,16 @@ def main(output_s3_processed_path, aws_access_key, aws_secret_key, start_date, e
         # 결측치 처리: category_id를 기준으로 brand 결측치 대체
         imputed_cat_br_df = impute_by_mode_value(imputed_cat_br_df, "category_id", "brand")
 
-        # 대체되지 않은 결측치 제거 및 데이터프레임 컬럼 재배치
-        processed_df = drop_null_and_reorder_cols(imputed_cat_br_df, parquet_prefix, new_column_order)
+        # 대체되지 않은 결측치 unknown으로 변경 및 데이터프레임 컬럼 재배치
+        total_imputed_df = impute_by_unknown(imputed_cat_br_df, parquet_prefix)
+
+        # category_code 컬럼 분리
+        weekly_cat_code_seperated_df = seperate_category_code(total_imputed_df)
+
+        # event_time 컬럼 분리
+        weekly_event_time_seperated_df = separate_event_time_col(weekly_cat_code_seperated_df)
+
+        processed_df = reorder_cols(weekly_event_time_seperated_df, new_column_order)
 
         logger.info(f"Transform 완료된 DataFrame:")
         processed_df.show(5)
