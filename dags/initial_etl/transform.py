@@ -1,11 +1,10 @@
 from pyspark.sql import SparkSession
-# from pyspark.sql.functions import first, col, count, sum, round, countDistinct, lit, coalesce, row_number, to_date, date_format, split, when
 from pyspark.sql import functions as F
 from pyspark.sql.window import Window
 from pyspark.sql import DataFrame
 from datetime import datetime, timedelta
 import pandas as pd
-# from airflow.providers.amazon.aws.hooks.base_aws import AwsBaseHook
+
 import argparse
 import logging
 import boto3
@@ -57,7 +56,6 @@ def list_s3_folders(bucket_name, prefix, aws_access_key, aws_secret_key):
             logger.warning(f"{prefix} 경로에 parquet 폴더가 없습니다.")
             return []
 
-
         # 폴더 경로 추출
         folder_paths = set()
         for obj in response['Contents']:
@@ -79,24 +77,6 @@ def list_s3_folders(bucket_name, prefix, aws_access_key, aws_secret_key):
         logger.error(f"S3에서 parquet 폴더 목록을 가져오는 중 오류 발생: {str(e)}")
         return []
     
-
-# def seperate_category_code(df, category_code="category_code"):
-#     """
-#     category_code 컬럼을 "." 단위로 나누어, 대분류, 중분류, 소분류로 분리
-#     """
-#     # Split 결과를 배열로 저장
-#     category_split_col = F.split(F.col(category_code), "\\.")
-
-#     # 컬럼 추가
-#     df = df.withColumns(
-#         {
-#             "category_lv_1": category_split_col.getItem(0),
-#             "category_lv_2": F.when(category_split_col.getItem(1).isNotNull(), category_split_col.getItem(1)).otherwise("none"),
-#             "category_lv_3": F.when(category_split_col.getItem(2).isNotNull(), category_split_col.getItem(2)).otherwise("none")
-#         }
-#     )
-
-#     return df
 
 def seperate_category_code(df, category_code="category_code"):
     """
@@ -140,8 +120,8 @@ def separate_event_time_col(df, event_col="event_time"):
 
 def impute_by_mode_value(df: DataFrame, group_col: str, target_col: str) -> DataFrame:
     """
-    특정 그룹(group_col) 내에서 target_col의 최빈값(mode)을 찾아 NULL 값을 대체하는 함수입니다.
-    이 함수는 리소스 사용 최적화를 위해 필요한 컬럼만 선택하고, 계산된 최빈값 결과를 브로드캐스트 조인으로 사용합니다.
+    특정 그룹(group_col) 내에서 target_col의 최빈값(mode)을 찾아 NULL 값을 대체하는 함수.
+    리소스 사용 최적화를 위해 필요한 컬럼만 선택하고, 계산된 최빈값 결과를 브로드캐스트 조인.
     
     Parameters:
     - df: 입력 Spark DataFrame
@@ -186,24 +166,6 @@ def impute_by_mode_value(df: DataFrame, group_col: str, target_col: str) -> Data
     
     return df_imputed
 
-# def drop_null_and_reorder_cols(df, prefix, new_column_order):
-#     """
-#     결측치를 제거하고 Spark DataFrame의 컬럼 순서 변경
-#     """
-#     # 결측치 처리
-#     before_drop = df.count()
-#     df = df.na.drop()
-#     after_drop = df.count()
-#     dropped_rows = before_drop - after_drop
-#     logger.info(f"{prefix}에서 {before_drop}개 행 중 {dropped_rows}개의 결측치 행 제거.")
-
-#     # 입력된 컬럼 리스트가 실제 컬럼과 일치하는지 확인
-#     if set(new_column_order) != set(df.columns):
-#         raise ValueError("입력한 컬럼 리스트가 DataFrame의 컬럼과 일치하지 않습니다.")
-
-#     df = df.select([F.col(c) for c in new_column_order])
-
-#     return df
 
 def impute_by_unknown(df, prefix):
     """
@@ -218,42 +180,42 @@ def impute_by_unknown(df, prefix):
     
     return: 결측치가 "unknown"으로 대체되고, 컬럼 순서가 재정렬된 DataFrame
     """
-    # 1. 각 컬럼별 결측치 개수 계산
-    col_null_counts = (
-        df.select([F.sum(F.col(c).isNull().cast("int")).alias(c) for c in df.columns])
-          .collect()[0]
-          .asDict()
-    )
-    # 로그: 컬럼별 결측치 개수 출력
-    for col_name, null_count in col_null_counts.items():
-        logger.info(f"{prefix} - {col_name}: {null_count}개의 결측치 존재.")
+    # # 1. 각 컬럼별 결측치 개수 계산
+    # col_null_counts = (
+    #     df.select([F.sum(F.col(c).isNull().cast("int")).alias(c) for c in df.columns])
+    #       .collect()[0]
+    #       .asDict()
+    # )
+    # # 로그: 컬럼별 결측치 개수 출력
+    # for col_name, null_count in col_null_counts.items():
+    #     logger.info(f"{prefix} - {col_name}: {null_count}개의 결측치 존재.")
 
-    # 전체 셀 단위 결측치 총합
-    total_nulls = sum(col_null_counts.values())
-    logger.info(f"{prefix} - 전체 결측치 개수 (셀 단위): {total_nulls}")
+    # # 전체 셀 단위 결측치 총합
+    # total_nulls = sum(col_null_counts.values())
+    # logger.info(f"{prefix} - 전체 결측치 개수 (셀 단위): {total_nulls}")
 
-    # 2. 결측치가 포함된 행(row) 수 계산
-    total_rows = df.count()
-    rows_with_null = df.filter(
-        F.array_contains(F.array(*[F.when(F.col(c).isNull(), F.lit(1)).otherwise(F.lit(0)) for c in df.columns]), 1)
-    ).count()
-    logger.info(f"{prefix} - 전체 {total_rows}개 행 중, 결측치가 포함된 행: {rows_with_null}개.")
+    # # 2. 결측치가 포함된 행(row) 수 계산
+    # total_rows = df.count()
+    # rows_with_null = df.filter(
+    #     F.array_contains(F.array(*[F.when(F.col(c).isNull(), F.lit(1)).otherwise(F.lit(0)) for c in df.columns]), 1)
+    # ).count()
+    # logger.info(f"{prefix} - 전체 {total_rows}개 행 중, 결측치가 포함된 행: {rows_with_null}개.")
 
     # 3. 모든 결측치를 "unknown"으로 대체
     df = df.na.fill("unknown")
     
     return df
 
+
 def reorder_cols(df, new_column_order):
-    # 4. 입력된 컬럼 리스트가 실제 컬럼과 일치하는지 확인
+    # 입력된 컬럼 리스트가 실제 컬럼과 일치하는지 확인
     if set(new_column_order) != set(df.columns):
         raise ValueError("입력한 컬럼 리스트가 DataFrame의 컬럼과 일치하지 않습니다.")
     
-    # 5. 컬럼 순서 재정렬
+    # 컬럼 순서 재정렬
     df = df.select([F.col(c) for c in new_column_order])
 
     return df
-
 
 
 def detect_date_format(date_str):
@@ -275,6 +237,79 @@ def detect_date_format(date_str):
         raise ValueError(f"올바른 날짜 형식이 아닙니다: {date_str} (YYYY-MM-DD 또는 YYMMDD만 허용)")
 
 
+def create_star_schema(df):
+    """
+    입력 DataFrame에서 star schema에 해당하는 Dimension 및 Fact 테이블을 생성.
+    
+    대규모 데이터셋 환경에서 성능 최적화를 위해 window 함수 대신 monotonically_increasing_id()를 사용하며,
+    입력 DataFrame을 캐싱하고, 작은 Dimension 테이블(Time Dimension)에 대해서는 broadcast join을 활용.
+    
+    Parameters:
+      df (DataFrame): 아래와 같은 컬럼을 포함하는 DataFrame
+          [
+              "user_id", "user_session", "category_id", "event_time", "event_time_ymd", 
+              "event_time_hms", "event_time_month", "event_time_day", "event_time_hour", 
+              "event_time_day_name", "event_type", "product_id", "category_code", 
+              "category_lv_1", "category_lv_2", "category_lv_3", "brand", "price"
+          ]
+    
+    Returns:
+      dict: {
+         "time_dim": Time Dimension DataFrame,
+         "category_dim": Category Dimension DataFrame,
+         "product_dim": Product Dimension DataFrame,
+         "user_dim": User Dimension DataFrame,
+         "fact_df": Fact 테이블 DataFrame
+      }
+    """
+    
+    # 캐시를 통해 여러 번의 재계산 방지
+    df = df.cache()
+    
+    # 각 Dimension에 사용할 컬럼 목록 변수화
+    time_cols = ["event_time", "event_time_ymd", "event_time_hms", 
+                 "event_time_month", "event_time_day", "event_time_hour", "event_time_day_name"]
+    category_cols = ["category_id", "category_code", "category_lv_1", "category_lv_2", "category_lv_3"]
+    product_cols = ["product_id", "brand", "price"]
+    user_cols = ["user_id", "user_session"]
+    
+    # 1. Time Dimension 생성 (window 함수 대신 monotonically_increasing_id() 사용)
+    # dropDuplicates() 후, 각 고유 row에 대해 고유한 surrogate key를 부여합니다.
+    time_dim = df.select(*time_cols).dropDuplicates()
+    time_dim = time_dim.withColumn("time_id", F.monotonically_increasing_id()) \
+                       .select("time_id", *time_cols)
+    
+    # Time Dimension은 dropDuplicates 후 일반적으로 크기가 작으므로 broadcast join 적용
+    time_dim_broadcasted = F.broadcast(time_dim)
+    
+    # 2. Category Dimension 생성
+    category_dim = df.select(*category_cols).dropDuplicates()
+    
+    # 3. Product Dimension 생성
+    product_dim = df.select(*product_cols).dropDuplicates()
+    
+    # 4. User Dimension 생성
+    user_dim = df.select(*user_cols).dropDuplicates()
+    
+    # 5. Fact 테이블 생성: Time Dimension과의 join 시 broadcast 처리된 time_dim 사용
+    fact_df = df.join(time_dim_broadcasted, on=time_cols, how="left")
+    fact_df = fact_df.select("user_id", "category_id", "product_id", "event_type", "time_id")
+    
+    # event_id는 fact 테이블 각 행에 대해 고유하게 부여
+    fact_df = fact_df.withColumn("event_id", F.monotonically_increasing_id()) \
+                     .select("event_id", "time_id", "category_id", "product_id", "user_id", "event_type")
+        
+    star_schema_dict = {
+        "time_dim": time_dim,
+        "category_dim": category_dim,
+        "product_dim": product_dim,
+        "user_dim": user_dim,
+        "fact_df": fact_df
+    }
+
+    return star_schema_dict
+
+
 def s3_path_exists(bucket_name, prefix, aws_access_key, aws_secret_key):
     """ 
     S3 경로가 존재하는지 확인
@@ -286,7 +321,7 @@ def s3_path_exists(bucket_name, prefix, aws_access_key, aws_secret_key):
     return 'Contents' in response  # 객체가 존재하면 True
 
 
-def upload_to_s3(df, start_date, output_s3_raw_path, aws_access_key, aws_secret_key):
+def upload_to_s3(df, start_date, output_s3_raw_path, aws_access_key, aws_secret_key, is_raw=True, schema_key=None):
     """
     Spark DataFrame을 S3에 Parquet 형식으로 저장하되,
     해당 경로가 존재하면 저장을 건너뜀
@@ -300,7 +335,10 @@ def upload_to_s3(df, start_date, output_s3_raw_path, aws_access_key, aws_secret_
     # 3. S3 저장 경로 설정 (YYMMDD 형식)
     transformed_key = date_obj.strftime("%y%m%d")  # 무조건 YYMMDD 형식으로 변환
 
-    s3_prefix = f"{output_s3_raw_path}/{transformed_key}/"
+    if is_raw:
+        s3_prefix = f"{output_s3_raw_path}/{transformed_key}/"
+    else:
+        s3_prefix = f"{output_s3_raw_path}/{transformed_key}/{schema_key}"
 
     # 4. S3 경로 존재 여부 확인
     if s3_path_exists(S3_BUCKET_NAME, s3_prefix, aws_access_key, aws_secret_key):
@@ -360,10 +398,19 @@ def main(output_s3_processed_path, aws_access_key, aws_secret_key, start_date, e
 
         processed_df = reorder_cols(weekly_event_time_seperated_df, new_column_order)
 
-        logger.info(f"Transform 완료된 DataFrame:")
-        processed_df.show(5)
+        logger.info(f"Star Schema로 테이블 분리 시작")
+        star_schema_dict = create_star_schema(processed_df)
 
-        upload_to_s3(processed_df, start_date_of_parquet, output_s3_processed_path, aws_access_key, aws_secret_key)
+        for schema_key in star_schema_dict.keys():
+            logger.info(f"{schema_key} 테이블 확인:")
+            star_schema_dict[schema_key].show(5, truncate=False)
+
+            logger.info(f"{schema_key} 테이블 s3에 적재:")
+
+            upload_to_s3(star_schema_dict[schema_key], start_date_of_parquet, output_s3_processed_path, aws_access_key, aws_secret_key, False, schema_key)
+
+    spark.stop()
+    logger.info("SparkSession이 성공적으로 종료되었습니다.")
 
 
 if __name__ == "__main__":

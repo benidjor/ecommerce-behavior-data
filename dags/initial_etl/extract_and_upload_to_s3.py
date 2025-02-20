@@ -97,10 +97,43 @@ def s3_path_exists(bucket_name, prefix, aws_access_key, aws_secret_key):
     return 'Contents' in response  # 객체가 존재하면 True
 
 
-def upload_to_s3(df, start_date, output_s3_raw_path, aws_access_key, aws_secret_key):
+# def upload_to_s3(df, start_date, output_s3_raw_path, aws_access_key, aws_secret_key):
+#     """
+#     Spark DataFrame을 S3에 Parquet 형식으로 저장하되,
+#     해당 경로가 존재하면 저장을 건너뛴다.
+#     """
+#     # 1️. start_date의 형식 자동 감지 및 datetime 변환
+#     date_obj = detect_date_format(start_date)
+
+#     # 2️. 종료 날짜 계산
+#     end_date = (date_obj + timedelta(days=6)).strftime("%Y-%m-%d")
+
+#     # 3. S3 저장 경로 설정 (YYMMDD 형식)
+#     transformed_key = date_obj.strftime("%y%m%d")  # 무조건 YYMMDD 형식으로 변환
+
+#     s3_prefix = f"{output_s3_raw_path}/{transformed_key}/"
+
+#     # 4. S3 경로 존재 여부 확인
+#     if s3_path_exists(S3_BUCKET_NAME, s3_prefix, aws_access_key, aws_secret_key):
+#         logger.info(f"S3 경로가 이미 존재하므로 업로드를 건너뜁니다: s3://{S3_BUCKET_NAME}/{s3_prefix}")
+#         return
+
+#     try:
+#         # 5. Spark DataFrame을 S3에 직접 저장
+#         s3_path = f"s3a://{S3_BUCKET_NAME}/{s3_prefix}"
+#         logger.info(f"일주일 ({start_date} ~ {end_date}) 데이터를 S3에 저장합니다 ({s3_path})")
+        
+#         df.write.mode("overwrite").parquet(s3_path)
+        
+#         logger.info(f"일주일 ({start_date} ~ {end_date}) 데이터 업로드 완료.")
+    
+#     except Exception as e:
+#         logger.error(f"일주일 ({start_date} ~ {end_date}) 데이터 업로드 중 오류 발생: {e}", exc_info=True)
+
+def upload_to_s3(df, start_date, output_s3_raw_path, aws_access_key, aws_secret_key, is_raw=True, schema_key=None):
     """
     Spark DataFrame을 S3에 Parquet 형식으로 저장하되,
-    해당 경로가 존재하면 저장을 건너뛴다.
+    해당 경로가 존재하면 저장을 건너뜀
     """
     # 1️. start_date의 형식 자동 감지 및 datetime 변환
     date_obj = detect_date_format(start_date)
@@ -111,7 +144,10 @@ def upload_to_s3(df, start_date, output_s3_raw_path, aws_access_key, aws_secret_
     # 3. S3 저장 경로 설정 (YYMMDD 형식)
     transformed_key = date_obj.strftime("%y%m%d")  # 무조건 YYMMDD 형식으로 변환
 
-    s3_prefix = f"{output_s3_raw_path}/{transformed_key}/"
+    if is_raw:
+        s3_prefix = f"{output_s3_raw_path}/{transformed_key}/"
+    else:
+        s3_prefix = f"{output_s3_raw_path}/{transformed_key}/{schema_key}"
 
     # 4. S3 경로 존재 여부 확인
     if s3_path_exists(S3_BUCKET_NAME, s3_prefix, aws_access_key, aws_secret_key):
@@ -152,7 +188,10 @@ def main(input_local_path, output_s3_raw_path, aws_access_key, aws_secret_key, s
             filtered_df.show(5, truncate=False)
 
             upload_to_s3(filtered_df, weekly_start_date, output_s3_raw_path, aws_access_key, aws_secret_key)
-
+    
+    spark.stop()
+    logger.info("SparkSession이 성공적으로 종료되었습니다.")
+    
 
 if __name__ == "__main__":
 
