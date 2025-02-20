@@ -36,87 +36,44 @@ def get_spark_session(aws_access_key, aws_secret_key):
 
     # SparkSession Time Zone을 UTC로 설정
     spark.conf.set("spark.sql.session.timeZone", "UTC")
-    logger.info(f"Current TimeZone: {spark.conf.get("spark.sql.session.timeZone")}")
+    logger.info(f"Current TimeZone: {spark.conf.get('spark.sql.session.timeZone')}")
 
     return spark
 
 
 def list_s3_folders(bucket_name, prefix, aws_access_key, aws_secret_key):
     """
-    S3에서 특정 prefix 경로 아래의 폴더 목록을 가져오기
+    boto3 paginator를 사용하여 S3 경로 내 모든 폴더(첫 번째 레벨) 목록을 조회.
     """
     s3 = boto3.client('s3',
                       aws_access_key_id=aws_access_key,
                       aws_secret_access_key=aws_secret_key)
-
+    
     try:
-        response = s3.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
-
-        if 'Contents' not in response:
+        paginator = s3.get_paginator('list_objects_v2')
+        pages = paginator.paginate(Bucket=bucket_name, Prefix=prefix)
+        
+        folder_paths = set()
+        for page in pages:
+            for obj in page.get('Contents', []):
+                key = obj['Key']
+                parts = key.split("/")
+                # 첫 번째 레벨 폴더 추출: prefix 다음에 오는 폴더명
+                if len(parts) > 1 and parts[1]:
+                    folder_paths.add(parts[1])
+        
+        if not folder_paths:
             logger.warning(f"{prefix} 경로에 parquet 폴더가 없습니다.")
             return []
-
-        # 폴더 경로 추출
-        folder_paths = set()
-        for obj in response['Contents']:
-            key = obj['Key']
-            day_key = key.split("/")[1]
-            folder_paths.add(day_key)
-            # parts = key[len(prefix):].split("/")  # Prefix 이후의 경로를 분할
-            # if len(parts) > 1 and parts[0]:  # 첫 번째 레벨 폴더만 가져옴
-            #     folder_paths.add(f"{prefix.rstrip('/')}/{parts[0]}")
-        logger.info(f"s3_folders: {folder_paths}")
-
-        s3_folders = [f"s3a://{bucket_name}/{prefix}/{folder}" for folder in folder_paths]
         
-        logger.info(f"s3_folders: {s3_folders}")
-        logger.info(f"{prefix} 경로에서 {len(s3_folders)}개의 parquet 폴더 발견.")
+        s3_folders = [f"s3a://{bucket_name}/{prefix}/{folder}" for folder in folder_paths]
+        logger.info(f"{prefix} 경로에서 {len(s3_folders)}개의 폴더 발견: {s3_folders}")
         return s3_folders
 
     except Exception as e:
-        logger.error(f"S3에서 parquet 폴더 목록을 가져오는 중 오류 발생: {str(e)}")
+        logger.error(f"S3에서 parquet 폴더 목록을 가져오는 중 오류 발생: {str(e)}", exc_info=True)
         return []
     
-
-def seperate_category_code(df, category_code="category_code"):
-    """
-    category_code 컬럼을 "." 단위로 분리하여, 
-    대분류(category_lv_1), 중분류(category_lv_2), 소분류(category_lv_3)로 나누는 함수입니다.
-    만약 category_code가 "unknown"인 경우, 모든 레벨을 "unknown"으로 처리합니다.
-    """
-    split_col = F.split(F.col(category_code), "\\.")
-    levels = [("category_lv_1", None), ("category_lv_2", "none"), ("category_lv_3", "none")]
-    
-    for i, (col_name, default_val) in enumerate(levels):
-        # category_code가 "unknown"이면 무조건 "unknown"으로 처리
-        # 그렇지 않은 경우, 해당 인덱스의 값이 있으면 사용하고, 없으면(default_val이 설정되어 있으면) default_val 사용
-        df = df.withColumn(
-            col_name,
-            F.when(F.col(category_code) == "unknown", F.lit("unknown"))
-             .otherwise(
-                 F.coalesce(split_col.getItem(i), F.lit(default_val)) if default_val is not None 
-                 else split_col.getItem(i)
-             )
-        )
-    return df
-
-
-def separate_event_time_col(df, event_col="event_time"):
-    """
-    event_time 컬럼을 바탕으로, 월, 일, 시, 요일 파생 컬럼 생성
-    """
-    transformations = {
-        "event_time_month": "MM",       # 월
-        "event_time_day": "dd",         # 일
-        "event_time_hour": "HH",        # 시
-        "event_time_day_name": "E"      # 요일
-    }
-
-    for col_name, format_str in transformations.items():
-        df = df.withColumn(col_name, F.date_format(event_col, format_str))
-
-    return df
-
 
 def impute_by_mode_value(df: DataFrame, group_col: str, target_col: str) -> DataFrame:
     """
@@ -167,43 +124,72 @@ def impute_by_mode_value(df: DataFrame, group_col: str, target_col: str) -> Data
     return df_imputed
 
 
-def impute_by_unknown(df, prefix):
+def multiple_imputes_by_mode(df, impute_params):
     """
-    모든 결측치를 "unknown"으로 대체하고, 
-    각 컬럼별 결측치 개수와 결측치가 있는 행(row)의 갯수를 로그로 출력한 후,
-    Spark DataFrame의 컬럼 순서를 변경하는 함수.
-    
-    Parameters:
-    - df: 입력 Spark DataFrame
-    - prefix: 로그 메시지에 사용될 접두어
-    - new_column_order: 재정렬할 컬럼 순서 리스트
-    
-    return: 결측치가 "unknown"으로 대체되고, 컬럼 순서가 재정렬된 DataFrame
+    impute_params: 리스트 형식으로 [(group_col, target_col), ...] 전달.
+    각 튜플에 대해 impute_by_mode_value를 호출하여 결측치를 채움.
     """
-    # # 1. 각 컬럼별 결측치 개수 계산
-    # col_null_counts = (
-    #     df.select([F.sum(F.col(c).isNull().cast("int")).alias(c) for c in df.columns])
-    #       .collect()[0]
-    #       .asDict()
-    # )
-    # # 로그: 컬럼별 결측치 개수 출력
-    # for col_name, null_count in col_null_counts.items():
-    #     logger.info(f"{prefix} - {col_name}: {null_count}개의 결측치 존재.")
+    for group_col, target_col in impute_params:
+        df = impute_by_mode_value(df, group_col, target_col)
+    return df
 
-    # # 전체 셀 단위 결측치 총합
-    # total_nulls = sum(col_null_counts.values())
-    # logger.info(f"{prefix} - 전체 결측치 개수 (셀 단위): {total_nulls}")
 
-    # # 2. 결측치가 포함된 행(row) 수 계산
-    # total_rows = df.count()
-    # rows_with_null = df.filter(
-    #     F.array_contains(F.array(*[F.when(F.col(c).isNull(), F.lit(1)).otherwise(F.lit(0)) for c in df.columns]), 1)
-    # ).count()
-    # logger.info(f"{prefix} - 전체 {total_rows}개 행 중, 결측치가 포함된 행: {rows_with_null}개.")
+def imputation_process(df):
+    """
+    product_id 기준 → category_id 기준 순으로 category_code, brand 결측치르 채운 후, 
+    남은 결측치는 "unknown"으로 처리.
+    """
+    impute_params = [
+        ("product_id", "category_code"),  # product_id 기준으로 먼저 채우고
+        ("category_id", "category_code"),   # 남은 결측치는 category_id 기준으로 채우기
+        ("product_id", "brand"),
+        ("category_id", "brand")
+    ]
+    df = multiple_imputes_by_mode(df, impute_params)
 
-    # 3. 모든 결측치를 "unknown"으로 대체
-    df = df.na.fill("unknown")
+    # 대체되지 않은 결측치 unknown으로 변경
+    total_imputed_df = df.na.fill("unknown")
+
+    return total_imputed_df
+
+
+def seperate_category_code(df, category_code="category_code"):
+    """
+    category_code 컬럼을 "." 단위로 분리하여, 
+    대분류(category_lv_1), 중분류(category_lv_2), 소분류(category_lv_3)로 나누는 함수입니다.
+    만약 category_code가 "unknown"인 경우, 모든 레벨을 "unknown"으로 처리합니다.
+    """
+    split_col = F.split(F.col(category_code), "\\.")
+    levels = [("category_lv_1", None), ("category_lv_2", "none"), ("category_lv_3", "none")]
     
+    for i, (col_name, default_val) in enumerate(levels):
+        # category_code가 "unknown"이면 무조건 "unknown"으로 처리
+        # 그렇지 않은 경우, 해당 인덱스의 값이 있으면 사용하고, 없으면(default_val이 설정되어 있으면) default_val 사용
+        df = df.withColumn(
+            col_name,
+            F.when(F.col(category_code) == "unknown", F.lit("unknown"))
+             .otherwise(
+                 F.coalesce(split_col.getItem(i), F.lit(default_val)) if default_val is not None 
+                 else split_col.getItem(i)
+             )
+        )
+    return df
+
+
+def separate_event_time_col(df, event_col="event_time"):
+    """
+    event_time 컬럼을 바탕으로, 월, 일, 시, 요일 파생 컬럼 생성
+    """
+    transformations = {
+        "event_time_month": "MM",       # 월
+        "event_time_day": "dd",         # 일
+        "event_time_hour": "HH",        # 시
+        "event_time_day_name": "E"      # 요일
+    }
+
+    for col_name, format_str in transformations.items():
+        df = df.withColumn(col_name, F.date_format(event_col, format_str))
+
     return df
 
 
@@ -217,6 +203,18 @@ def reorder_cols(df, new_column_order):
 
     return df
 
+def seperate_and_reorder_cols(df, category_code, event_col, new_column_order):
+
+    # category_code 컬럼 분리
+    df = seperate_category_code(df)
+
+    # event_time 컬럼 분리
+    df = separate_event_time_col(df)
+
+    # 컬럼 순서 재배치
+    df = reorder_cols(df, new_column_order)
+
+    return df
 
 def detect_date_format(date_str):
     """ 
@@ -224,15 +222,13 @@ def detect_date_format(date_str):
     """
     try:
         # YYYY-MM-DD 형식일 경우
-        return datetime.strptime(date_str, "%Y-%m-%d")
-    
+        return datetime.strptime(date_str, "%Y-%m-%d")    
     except ValueError:
         pass  # 다음 형식 검사
 
     try:
         # YYMMDD 형식일 경우
-        return datetime.strptime(date_str, "%y%m%d")
-    
+        return datetime.strptime(date_str, "%y%m%d")    
     except ValueError:
         raise ValueError(f"올바른 날짜 형식이 아닙니다: {date_str} (YYYY-MM-DD 또는 YYMMDD만 허용)")
 
@@ -245,14 +241,8 @@ def create_star_schema(df):
     입력 DataFrame을 캐싱하고, 작은 Dimension 테이블(Time Dimension)에 대해서는 broadcast join을 활용.
     
     Parameters:
-      df (DataFrame): 아래와 같은 컬럼을 포함하는 DataFrame
-          [
-              "user_id", "user_session", "category_id", "event_time", "event_time_ymd", 
-              "event_time_hms", "event_time_month", "event_time_day", "event_time_hour", 
-              "event_time_day_name", "event_type", "product_id", "category_code", 
-              "category_lv_1", "category_lv_2", "category_lv_3", "brand", "price"
-          ]
-    
+      df (DataFrame): DataFrame
+
     Returns:
       dict: {
          "time_dim": Time Dimension DataFrame,
@@ -274,7 +264,7 @@ def create_star_schema(df):
     user_cols = ["user_id", "user_session"]
     
     # 1. Time Dimension 생성 (window 함수 대신 monotonically_increasing_id() 사용)
-    # dropDuplicates() 후, 각 고유 row에 대해 고유한 surrogate key를 부여합니다.
+    # dropDuplicates() 후, 각 고유 row에 대해 고유한 surrogate key를 부여
     time_dim = df.select(*time_cols).dropDuplicates()
     time_dim = time_dim.withColumn("time_id", F.monotonically_increasing_id()) \
                        .select("time_id", *time_cols)
@@ -307,6 +297,8 @@ def create_star_schema(df):
         "fact_df": fact_df
     }
 
+    df.unpersist() # 캐시 해제
+    
     return star_schema_dict
 
 
@@ -317,7 +309,6 @@ def s3_path_exists(bucket_name, prefix, aws_access_key, aws_secret_key):
     s3 = boto3.client('s3', aws_access_key_id=aws_access_key, aws_secret_access_key=aws_secret_key)
     
     response = s3.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
-
     return 'Contents' in response  # 객체가 존재하면 True
 
 
@@ -350,7 +341,7 @@ def upload_to_s3(df, start_date, output_s3_raw_path, aws_access_key, aws_secret_
         s3_path = f"s3a://{S3_BUCKET_NAME}/{s3_prefix}"
         logger.info(f"일주일 ({start_date} ~ {end_date}) 데이터를 S3에 저장합니다 ({s3_path})")
         
-        df.write.mode("overwrite").parquet(s3_path)
+        df.write.mode("overwrite").option("compression", "snappy").parquet(s3_path)
         
         logger.info(f"일주일 ({start_date} ~ {end_date}) 데이터 업로드 완료.")
     
@@ -364,7 +355,7 @@ def main(output_s3_processed_path, aws_access_key, aws_secret_key, start_date, e
 
     s3_folders = list_s3_folders(S3_BUCKET_NAME, RAW_FOLDER, aws_access_key, aws_secret_key)
     
-    logger.info(f"s3_folders: {s3_folders}")
+    # logger.info(f"s3_folders: {s3_folders}")
 
     for parquet_prefix in s3_folders:
         
@@ -372,31 +363,13 @@ def main(output_s3_processed_path, aws_access_key, aws_secret_key, start_date, e
         start_date_of_parquet = parquet_prefix.split("/")[-1]
         logger.info(f"Transform 대상 S3 경로: {parquet_prefix}, Transform 기준 날짜: {start_date_of_parquet}")
 
-        # parquet 데이터 읽기
-        weekly_raw_df = spark.read.parquet(parquet_prefix)
+        logger.info(f"결측치 처리 및 컬럼 재배치")
 
-        # 결측치 처리: category_id를 기준으로 category_code 결측치 대체
-        imputed_cat_df = impute_by_mode_value(weekly_raw_df, "category_id", "category_code")
-
-        # 결측치 처리: product_id를 기준으로 category_code 결측치 대체
-        imputed_cat_df = impute_by_mode_value(imputed_cat_df, "product_id", "category_code")
-
-        # 결측치 처리: product_id를 기준으로 brand 결측치 대체
-        imputed_cat_br_df = impute_by_mode_value(imputed_cat_df, "product_id", "brand")
-
-        # 결측치 처리: category_id를 기준으로 brand 결측치 대체
-        imputed_cat_br_df = impute_by_mode_value(imputed_cat_br_df, "category_id", "brand")
-
-        # 대체되지 않은 결측치 unknown으로 변경 및 데이터프레임 컬럼 재배치
-        total_imputed_df = impute_by_unknown(imputed_cat_br_df, parquet_prefix)
-
-        # category_code 컬럼 분리
-        weekly_cat_code_seperated_df = seperate_category_code(total_imputed_df)
-
-        # event_time 컬럼 분리
-        weekly_event_time_seperated_df = separate_event_time_col(weekly_cat_code_seperated_df)
-
-        processed_df = reorder_cols(weekly_event_time_seperated_df, new_column_order)
+        processed_df = (
+            spark.read.parquet(parquet_prefix)
+            .transform(imputation_process) # 결측치 처리
+            .transform(lambda df: seperate_and_reorder_cols(df, "category_code", "event_time", new_column_order)) # 컬럼 분리 및 재배치
+        )
 
         logger.info(f"Star Schema로 테이블 분리 시작")
         star_schema_dict = create_star_schema(processed_df)

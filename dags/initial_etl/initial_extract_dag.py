@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 # 기본 경로 설정
 BASE_PATH = "/opt/airflow/data"
 S3_BUCKET_NAME = "ecommerce-behavior-data"
-LOCAL_FOLDER = "parquet_data/2019_oct.parquet"
+LOCAL_FOLDER = "parquet_data/total_merged.parquet"
 RAW_FOLDER = "raw-data"
 PROCESSED_FOLDER = "processed-data"
 
@@ -44,7 +44,7 @@ application_args=[
     "--aws_access_key", credentials.access_key,
     "--aws_secret_key", credentials.secret_key,
     "--start_date", "2019-10-01",
-    "--end_date", "2019-10-14",
+    "--end_date", "2019-10-28",
 ]
 
 conf={
