@@ -20,6 +20,7 @@ new_column_order = [
     "user_id", "user_session", "category_id", "event_time", "event_time_ymd", "event_time_hms", "event_time_month", "event_time_day", "event_time_hour", "event_time_day_name", "event_type", "product_id", "category_code", "category_lv_1", "category_lv_2", "category_lv_3",  "brand", "price"
 ]
 
+
 def get_spark_session(aws_access_key, aws_secret_key):
     """
     AWS Connection ID를 사용하여 AWS 자격 증명을 가져온 후 SparkSession을 생성
@@ -184,7 +185,9 @@ def separate_event_time_col(df, event_col="event_time"):
         "event_time_month": "MM",       # 월
         "event_time_day": "dd",         # 일
         "event_time_hour": "HH",        # 시
-        "event_time_day_name": "E"      # 요일
+        "event_time_day_name": "E",     # 요일
+        # "event_time_ymd": "yyyy-MM-dd",   # 연-월-일
+        # "event_time_hms": "HH:mm:ss"      # 시:분:초
     }
 
     for col_name, format_str in transformations.items():
@@ -195,21 +198,25 @@ def separate_event_time_col(df, event_col="event_time"):
 
 def reorder_cols(df, new_column_order):
     # 입력된 컬럼 리스트가 실제 컬럼과 일치하는지 확인
-    if set(new_column_order) != set(df.columns):
-        raise ValueError("입력한 컬럼 리스트가 DataFrame의 컬럼과 일치하지 않습니다.")
+
+    # logger.info(f"DataFrame의 컬럼: {df.columns}")
+    # if set(new_column_order) != set(df.columns):
+    #     raise ValueError("입력한 컬럼 리스트가 DataFrame의 컬럼과 일치하지 않습니다.")
     
-    # 컬럼 순서 재정렬
+        # 컬럼 순서 재정렬
     df = df.select([F.col(c) for c in new_column_order])
 
+    logger.info(f"DataFrame 컬럼 재배치 완료: {df.columns}")
+    
     return df
 
 def seperate_and_reorder_cols(df, category_code, event_col, new_column_order):
 
     # category_code 컬럼 분리
-    df = seperate_category_code(df)
+    df = seperate_category_code(df, category_code)
 
     # event_time 컬럼 분리
-    df = separate_event_time_col(df)
+    df = separate_event_time_col(df, event_col)
 
     # 컬럼 순서 재배치
     df = reorder_cols(df, new_column_order)

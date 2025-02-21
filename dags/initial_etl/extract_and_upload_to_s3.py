@@ -47,17 +47,13 @@ def set_filtering_date(weekly_start_date: str="2019-10-01", weekly_end_date: str
     return weekly_dict
 
 
-def filter_by_date(spark, input_local_path, start_date, end_date):
+def filter_by_date(spark, df, start_date, end_date):
     """
     특정 날짜 범위로 데이터를 필터링
     """
-    logger.info(f"로컬 디렉토리: {input_local_path}")
-
     try:
-        df = spark.read.parquet(input_local_path)
-
-        if df.isEmpty():
-            logger.warning(f"데이터프레임이 비어 있습니다.")
+        if df.rdd.isEmpty():
+            logger.warning("데이터프레임이 비어 있습니다.")
             return None
 
         ymd_column = [col for col in df.columns if col.endswith('ymd')]
@@ -66,7 +62,6 @@ def filter_by_date(spark, input_local_path, start_date, end_date):
 
         logger.info(f"필터링 기준 컬럼: {ymd_column[0]}")
         filtered_df = df.filter(df[ymd_column[0]].between(start_date, end_date))
-
         return filtered_df
 
     except Exception as e:
@@ -142,6 +137,13 @@ def main(input_local_path, output_s3_raw_path, aws_access_key, aws_secret_key, s
 
     spark = get_spark_session(aws_access_key, aws_secret_key)
 
+    # 전체 데이터를 한 번 로드하여 캐싱
+    logger.info(f"{input_local_path} - 로컬 디렉토리 데이터셋 불러오는 중")
+    df = spark.read.parquet(input_local_path)
+    df.cache()
+    df.count()  # 캐시가 실제 메모리에 로드되도록 강제 액션 실행
+
+    logger.info(f"{input_local_path} - 로컬 디렉토리 데이터셋 불러오기 완료")
     weekly_dict = set_filtering_date(weekly_start_date=start_date, weekly_end_date=end_date, freq="7D")
 
     # for week, date_range in weekly_dict.items():
@@ -150,14 +152,14 @@ def main(input_local_path, output_s3_raw_path, aws_access_key, aws_secret_key, s
         weekly_end_date = date_range["weekly_end_date"]
 
         # 1주일 단위로 데이터 필터링
-        filtered_df = filter_by_date(spark, input_local_path, weekly_start_date, weekly_end_date)
+        filtered_df = filter_by_date(spark, df, weekly_start_date, weekly_end_date)
 
         # 필터링된 데이터 S3에 업로드
         if filtered_df:
 
             # s3 적재 데이터 확인
-            logger.info(f"{output_s3_raw_path} - s3 적재 데이터 확인:")
-            filtered_df.show(5, truncate=False)
+            logger.info(f"{output_s3_raw_path} - s3 적재 데이터 확인")
+            # filtered_df.show(5, truncate=False)
 
             upload_to_s3(filtered_df, weekly_start_date, output_s3_raw_path, aws_access_key, aws_secret_key)
     
