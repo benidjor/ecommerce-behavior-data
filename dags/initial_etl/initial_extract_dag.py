@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 # 기본 경로 설정
 BASE_PATH = "/opt/airflow/data"
 S3_BUCKET_NAME = "ecommerce-behavior-data"
-LOCAL_FOLDER = "parquet_data/total_merged.parquet"
+LOCAL_FOLDER = "parquet_data/total_merged_parquet"
 RAW_FOLDER = "raw-data"
 PROCESSED_FOLDER = "processed-data"
 

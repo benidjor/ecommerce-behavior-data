@@ -196,20 +196,6 @@ def separate_event_time_col(df, event_col="event_time"):
     return df
 
 
-def reorder_cols(df, new_column_order):
-    # 입력된 컬럼 리스트가 실제 컬럼과 일치하는지 확인
-
-    # logger.info(f"DataFrame의 컬럼: {df.columns}")
-    # if set(new_column_order) != set(df.columns):
-    #     raise ValueError("입력한 컬럼 리스트가 DataFrame의 컬럼과 일치하지 않습니다.")
-    
-        # 컬럼 순서 재정렬
-    df = df.select([F.col(c) for c in new_column_order])
-
-    logger.info(f"DataFrame 컬럼 재배치 완료: {df.columns}")
-    
-    return df
-
 def seperate_and_reorder_cols(df, category_code, event_col, new_column_order):
 
     # category_code 컬럼 분리
@@ -219,25 +205,10 @@ def seperate_and_reorder_cols(df, category_code, event_col, new_column_order):
     df = separate_event_time_col(df, event_col)
 
     # 컬럼 순서 재배치
-    df = reorder_cols(df, new_column_order)
+    df = df.select([F.col(c) for c in new_column_order])
+    logger.info(f"DataFrame 컬럼 재배치 완료: {df.columns}")
 
     return df
-
-def detect_date_format(date_str):
-    """ 
-    주어진 날짜가 'YYYY-MM-DD'인지 'YYMMDD'인지 판별 후 datetime 객체로 변환 
-    """
-    try:
-        # YYYY-MM-DD 형식일 경우
-        return datetime.strptime(date_str, "%Y-%m-%d")    
-    except ValueError:
-        pass  # 다음 형식 검사
-
-    try:
-        # YYMMDD 형식일 경우
-        return datetime.strptime(date_str, "%y%m%d")    
-    except ValueError:
-        raise ValueError(f"올바른 날짜 형식이 아닙니다: {date_str} (YYYY-MM-DD 또는 YYMMDD만 허용)")
 
 
 def create_star_schema(df):
@@ -309,7 +280,54 @@ def create_star_schema(df):
     return star_schema_dict
 
 
-def s3_path_exists(bucket_name, prefix, aws_access_key, aws_secret_key):
+def detect_date_format(date_str):
+    """ 
+    주어진 날짜가 'YYYY-MM-DD'인지 'YYMMDD'인지 판별 후 datetime 객체로 변환 
+    """
+    try:
+        # YYYY-MM-DD 형식일 경우
+        return datetime.strptime(date_str, "%Y-%m-%d")    
+    except ValueError:
+        pass  # 다음 형식 검사
+
+    try:
+        # YYMMDD 형식일 경우
+        return datetime.strptime(date_str, "%y%m%d")    
+    except ValueError:
+        raise ValueError(f"올바른 날짜 형식이 아닙니다: {date_str} (YYYY-MM-DD 또는 YYMMDD만 허용)")
+
+
+def generate_s3_details(start_date, output_s3_raw_path, is_raw=True, schema_key=None):
+    """
+    주어진 start_date와 output_s3_raw_path를 기반으로 S3 prefix와 종료 날짜(end_date)를 생성
+    
+    - start_date: 시작 날짜 (문자열 혹은 datetime)
+    - output_s3_raw_path: S3의 기본 경로
+    - is_raw: raw 데이터 여부 (True이면 schema_key 미포함)
+    - schema_key: raw가 아닌 경우에 추가할 schema key
+    
+    return:
+      s3_prefix: S3 저장 경로 (예: "{output_s3_raw_path}/YYMMDD/" 또는 "{output_s3_raw_path}/YYMMDD/{schema_key}")
+      end_date: start_date 기준 6일 후 날짜 (문자열, "YYYY-MM-DD" 형식)
+    """
+    # 1️. start_date의 형식 자동 감지 및 datetime 변환
+    date_obj = detect_date_format(start_date)
+
+    # 2️. 종료 날짜 계산
+    end_date = (date_obj + timedelta(days=6)).strftime("%Y-%m-%d")
+
+    # 3. S3 저장 경로 설정 (YYMMDD 형식)
+    transformed_key = date_obj.strftime("%y%m%d")  # YYMMDD 형식으로 변환
+
+    if is_raw:
+        s3_prefix = f"{output_s3_raw_path}/{transformed_key}/"
+    else:
+        s3_prefix = f"{output_s3_raw_path}/{transformed_key}/{schema_key}"
+        
+    return s3_prefix, end_date
+
+
+def is_s3_path_exists(bucket_name, prefix, aws_access_key, aws_secret_key):
     """ 
     S3 경로가 존재하는지 확인
     """
@@ -324,22 +342,10 @@ def upload_to_s3(df, start_date, output_s3_raw_path, aws_access_key, aws_secret_
     Spark DataFrame을 S3에 Parquet 형식으로 저장하되,
     해당 경로가 존재하면 저장을 건너뜀
     """
-    # 1️. start_date의 형식 자동 감지 및 datetime 변환
-    date_obj = detect_date_format(start_date)
-
-    # 2️. 종료 날짜 계산
-    end_date = (date_obj + timedelta(days=6)).strftime("%Y-%m-%d")
-
-    # 3. S3 저장 경로 설정 (YYMMDD 형식)
-    transformed_key = date_obj.strftime("%y%m%d")  # 무조건 YYMMDD 형식으로 변환
-
-    if is_raw:
-        s3_prefix = f"{output_s3_raw_path}/{transformed_key}/"
-    else:
-        s3_prefix = f"{output_s3_raw_path}/{transformed_key}/{schema_key}"
+    s3_prefix, end_date = generate_s3_details(start_date, output_s3_raw_path, is_raw, schema_key)
 
     # 4. S3 경로 존재 여부 확인
-    if s3_path_exists(S3_BUCKET_NAME, s3_prefix, aws_access_key, aws_secret_key):
+    if is_s3_path_exists(S3_BUCKET_NAME, s3_prefix, aws_access_key, aws_secret_key):
         logger.info(f"S3 경로가 이미 존재하므로 업로드를 건너뜁니다: s3://{S3_BUCKET_NAME}/{s3_prefix}")
         return
 
@@ -357,6 +363,11 @@ def upload_to_s3(df, start_date, output_s3_raw_path, aws_access_key, aws_secret_
 
 
 def main(output_s3_processed_path, aws_access_key, aws_secret_key, start_date, end_date):
+    """
+    1. S3의 RAW 폴더 내부에 있는 각 날짜별 폴더(예: s3a://.../raw-data/191001) 순회
+    2. 각 폴더에 대해, 동일 날짜의 Processed 폴더(예: s3a://.../processed-data/191001)가 이미 존재하면
+       Transform 및 Upload를 건너뛰고, 존재하지 않으면 Transform 작업을 수행한 후 Upload
+    """
     spark = get_spark_session(aws_access_key, aws_secret_key)
     logger.info(f"데이터 Transform 시작 일자: {start_date} ~ {end_date}")
 
@@ -370,6 +381,12 @@ def main(output_s3_processed_path, aws_access_key, aws_secret_key, start_date, e
         start_date_of_parquet = parquet_prefix.split("/")[-1]
         logger.info(f"Transform 대상 S3 경로: {parquet_prefix}, Transform 기준 날짜: {start_date_of_parquet}")
 
+        # 해당 날짜의 PROCESSED 데이터 폴더가 이미 존재하는지 확인
+        processed_prefix = f"{output_s3_processed_path}/{start_date_of_parquet}/"
+        if is_s3_path_exists(S3_BUCKET_NAME, processed_prefix, aws_access_key, aws_secret_key):
+            logger.info(f"Processed 데이터 폴더가 이미 존재하므로, Transform을 건너뜁니다: s3://{S3_BUCKET_NAME}/{processed_prefix}")
+            continue
+
         logger.info(f"결측치 처리 및 컬럼 재배치")
 
         processed_df = (
@@ -381,13 +398,13 @@ def main(output_s3_processed_path, aws_access_key, aws_secret_key, start_date, e
         logger.info(f"Star Schema로 테이블 분리 시작")
         star_schema_dict = create_star_schema(processed_df)
 
-        for schema_key in star_schema_dict.keys():
+        for schema_key, schema_df in star_schema_dict.items():
             logger.info(f"{schema_key} 테이블 확인:")
-            star_schema_dict[schema_key].show(5, truncate=False)
+            schema_df.show(5, truncate=False)
 
             logger.info(f"{schema_key} 테이블 s3에 적재:")
 
-            upload_to_s3(star_schema_dict[schema_key], start_date_of_parquet, output_s3_processed_path, aws_access_key, aws_secret_key, False, schema_key)
+            upload_to_s3(schema_df, start_date_of_parquet, output_s3_processed_path, aws_access_key, aws_secret_key, is_raw=False, schema_key=schema_key)
 
     spark.stop()
     logger.info("SparkSession이 성공적으로 종료되었습니다.")

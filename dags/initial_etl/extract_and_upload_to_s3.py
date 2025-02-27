@@ -1,5 +1,5 @@
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import to_date, date_format
+from pyspark.sql import functions as F
 from datetime import datetime, timedelta
 import pandas as pd
 # from airflow.providers.amazon.aws.hooks.base_aws import AwsBaseHook
@@ -58,7 +58,7 @@ def filter_by_date(spark, df, start_date, end_date):
 
         ymd_column = [col for col in df.columns if col.endswith('ymd')]
         for col in ymd_column:
-            df = df.withColumn(col, to_date(df[col]))
+            df = df.withColumn(col, F.to_date(df[col]))
 
         logger.info(f"필터링 기준 컬럼: {ymd_column[0]}")
         filtered_df = df.filter(df[ymd_column[0]].between(start_date, end_date))
@@ -84,9 +84,39 @@ def detect_date_format(date_str):
         return datetime.strptime(date_str, "%y%m%d")
     except ValueError:
         raise ValueError(f"올바른 날짜 형식이 아닙니다: {date_str} (YYYY-MM-DD 또는 YYMMDD만 허용됨)")
+    
+
+def generate_s3_details(start_date, output_s3_raw_path, is_raw=True, schema_key=None):
+    """
+    주어진 start_date와 output_s3_raw_path를 기반으로 S3 prefix와 종료 날짜(end_date)를 생성
+    
+    - start_date: 시작 날짜 (문자열 혹은 datetime)
+    - output_s3_raw_path: S3의 기본 경로
+    - is_raw: raw 데이터 여부 (True이면 schema_key 미포함)
+    - schema_key: raw가 아닌 경우에 추가할 schema key
+    
+    return:
+      s3_prefix: S3 저장 경로 (예: "{output_s3_raw_path}/YYMMDD/" 또는 "{output_s3_raw_path}/YYMMDD/{schema_key}")
+      end_date: start_date 기준 6일 후 날짜 (문자열, "YYYY-MM-DD" 형식)
+    """
+    # 1️. start_date의 형식 자동 감지 및 datetime 변환
+    date_obj = detect_date_format(start_date)
+
+    # 2️. 종료 날짜 계산
+    end_date = (date_obj + timedelta(days=6)).strftime("%Y-%m-%d")
+
+    # 3. S3 저장 경로 설정 (YYMMDD 형식)
+    transformed_key = date_obj.strftime("%y%m%d")  # YYMMDD 형식으로 변환
+
+    if is_raw:
+        s3_prefix = f"{output_s3_raw_path}/{transformed_key}/"
+    else:
+        s3_prefix = f"{output_s3_raw_path}/{transformed_key}/{schema_key}"
+        
+    return s3_prefix, end_date
 
 
-def s3_path_exists(bucket_name, prefix, aws_access_key, aws_secret_key):
+def is_s3_path_exists(bucket_name, prefix, aws_access_key, aws_secret_key):
     """ 
     S3 경로가 존재하는지 확인
     """
@@ -96,32 +126,42 @@ def s3_path_exists(bucket_name, prefix, aws_access_key, aws_secret_key):
     return 'Contents' in response  # 객체가 존재하면 True
 
 
+def get_missing_weeks(weekly_dict, output_s3_raw_path, aws_access_key, aws_secret_key):
+    """
+    주어진 weekly_dict를 순회하며, 각 주에 대해 S3 경로가 존재하지 않는 경우(즉, missing week)를 반환
+    
+    return: missing_weeks: 업로드가 필요한 주에 대한 딕셔너리
+    """
+    missing_weeks = {}
+    for date_range in weekly_dict.values():
+        weekly_start_date = date_range["weekly_start_date"]
+        weekly_end_date = date_range["weekly_end_date"]
+        s3_prefix, _ = generate_s3_details(weekly_start_date, output_s3_raw_path)
+        
+        if is_s3_path_exists(S3_BUCKET_NAME, s3_prefix, aws_access_key, aws_secret_key):
+            logger.info(f"S3 경로가 이미 존재하므로 해당 주({weekly_start_date} ~ {weekly_end_date}) 데이터 업로드를 건너뜁니다: s3://{S3_BUCKET_NAME}/{s3_prefix}")
+        else:
+            missing_weeks[weekly_start_date] = {
+                "weekly_start_date": weekly_start_date,
+                "weekly_end_date": weekly_end_date
+            }
+    return missing_weeks
+
+
 def upload_to_s3(df, start_date, output_s3_raw_path, aws_access_key, aws_secret_key, is_raw=True, schema_key=None):
     """
     Spark DataFrame을 S3에 Parquet 형식으로 저장하되,
-    해당 경로가 존재하면 저장을 건너뜀
+    해당 경로가 존재하면 저장 스킵
     """
-    # 1️. start_date의 형식 자동 감지 및 datetime 변환
-    date_obj = detect_date_format(start_date)
+    s3_prefix, end_date = generate_s3_details(start_date, output_s3_raw_path, is_raw, schema_key)
 
-    # 2️. 종료 날짜 계산
-    end_date = (date_obj + timedelta(days=6)).strftime("%Y-%m-%d")
-
-    # 3. S3 저장 경로 설정 (YYMMDD 형식)
-    transformed_key = date_obj.strftime("%y%m%d")  # 무조건 YYMMDD 형식으로 변환
-
-    if is_raw:
-        s3_prefix = f"{output_s3_raw_path}/{transformed_key}/"
-    else:
-        s3_prefix = f"{output_s3_raw_path}/{transformed_key}/{schema_key}"
-
-    # 4. S3 경로 존재 여부 확인
-    if s3_path_exists(S3_BUCKET_NAME, s3_prefix, aws_access_key, aws_secret_key):
+    # 1. S3 경로 존재 여부 확인
+    if is_s3_path_exists(S3_BUCKET_NAME, s3_prefix, aws_access_key, aws_secret_key):
         logger.info(f"S3 경로가 이미 존재하므로 업로드를 건너뜁니다: s3://{S3_BUCKET_NAME}/{s3_prefix}")
         return
 
     try:
-        # 5. Spark DataFrame을 S3에 직접 저장
+        # 2. Spark DataFrame을 S3에 직접 저장
         s3_path = f"s3a://{S3_BUCKET_NAME}/{s3_prefix}"
         logger.info(f"일주일 ({start_date} ~ {end_date}) 데이터를 S3에 저장합니다 ({s3_path})")
         
@@ -134,34 +174,52 @@ def upload_to_s3(df, start_date, output_s3_raw_path, aws_access_key, aws_secret_
 
 
 def main(input_local_path, output_s3_raw_path, aws_access_key, aws_secret_key, start_date, end_date):
+    """
+    1. weekly_dict를 생성한 후, 각 주의 S3 경로 존재 여부를 별도의 함수(get_missing_weeks)로 확인
+    2. 업로드가 필요한 주(missing weeks)가 없다면 전체 작업을 스킵
+    3. 업로드가 필요한 주에 대해서만 전체 데이터를 로드한 후 필터링 및 S3 업로드 진행
+    """
+    # 주 단위 날짜 범위 생성
+    weekly_dict = set_filtering_date(weekly_start_date=start_date, weekly_end_date=end_date, freq="7D")
+    
+    # 업로드가 필요한 주(즉, S3 폴더에 없는 주) 목록을 가져오기
+    missing_weeks = get_missing_weeks(weekly_dict, output_s3_raw_path, aws_access_key, aws_secret_key)
+    
+    if not missing_weeks:
+        logger.info("모든 Weekly 데이터가 이미 S3에 존재합니다. 전체 작업을 건너뜁니다.")
+        return
 
+    # SparkSession 시작 및 전체 데이터 로드
     spark = get_spark_session(aws_access_key, aws_secret_key)
 
     # 전체 데이터를 한 번 로드하여 캐싱
     logger.info(f"{input_local_path} - 로컬 디렉토리 데이터셋 불러오는 중")
     df = spark.read.parquet(input_local_path)
-    df.cache()
-    df.count()  # 캐시가 실제 메모리에 로드되도록 강제 액션 실행
+    filtered_df = df.filter((F.col("event_time_ymd") >= start_date) & (F.col("event_time_ymd") <= end_date))
 
-    logger.info(f"{input_local_path} - 로컬 디렉토리 데이터셋 불러오기 완료")
-    weekly_dict = set_filtering_date(weekly_start_date=start_date, weekly_end_date=end_date, freq="7D")
+    # df.cache()
+    # df.count()  # 캐시가 실제 메모리에 로드되도록 강제 액션 실행
 
-    # for week, date_range in weekly_dict.items():
-    for date_range in weekly_dict.values():
-        weekly_start_date = date_range["weekly_start_date"]
-        weekly_end_date = date_range["weekly_end_date"]
+    # 업로드가 필요한 주에 대해서만 필터링 및 S3 업로드
+    for week_info in missing_weeks.values():
+        missing_weekly_start_date = week_info["weekly_start_date"]
+        missing_weekly_end_date = week_info["weekly_end_date"]
+        
+        weekly_filtered_df = filter_by_date(spark, filtered_df, missing_weekly_start_date, missing_weekly_end_date)
+        if not weekly_filtered_df:
+            logger.info(f"주차 {missing_weekly_start_date} ~ {missing_weekly_end_date}에 해당하는 데이터가 없어 스킵합니다.")
+            continue
+        
+        s3_prefix, computed_end_date = generate_s3_details(missing_weekly_start_date, output_s3_raw_path)
+        try:
+            s3_path = f"s3a://{S3_BUCKET_NAME}/{s3_prefix}"
+            logger.info(f"일주일 ({missing_weekly_start_date} ~ {missing_weekly_end_date}) 데이터를 S3에 저장합니다 ({s3_path})")
+            
+            weekly_filtered_df.write.mode("overwrite").parquet(s3_path)
+            logger.info(f"일주일 ({missing_weekly_start_date} ~ {missing_weekly_end_date}) 데이터 업로드 완료.")
 
-        # 1주일 단위로 데이터 필터링
-        filtered_df = filter_by_date(spark, df, weekly_start_date, weekly_end_date)
-
-        # 필터링된 데이터 S3에 업로드
-        if filtered_df:
-
-            # s3 적재 데이터 확인
-            logger.info(f"{output_s3_raw_path} - s3 적재 데이터 확인")
-            # filtered_df.show(5, truncate=False)
-
-            upload_to_s3(filtered_df, weekly_start_date, output_s3_raw_path, aws_access_key, aws_secret_key)
+        except Exception as e:
+            logger.error(f"일주일 ({missing_weekly_start_date} ~ {missing_weekly_end_date}) 데이터 업로드 중 오류 발생: {e}", exc_info=True)
     
     spark.stop()
     logger.info("SparkSession이 성공적으로 종료되었습니다.")
