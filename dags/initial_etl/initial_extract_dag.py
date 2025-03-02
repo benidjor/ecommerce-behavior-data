@@ -8,6 +8,9 @@ import os
 import pandas as pd
 import logging
 
+# load_to_snowflake.py 파일에서 Snowflake 관련 함수들을 import
+from initial_etl import initial_run_sql
+
 # 로깅 설정
 logger = logging.getLogger(__name__)
 
@@ -78,5 +81,82 @@ transform_and_upload_to_s3 = SparkSubmitOperator(
     dag=dag,
 )
 
+def reset_tables():
+    """
+    Snowflake ECOMMERCE_RAW_DATA Schema에 통합 데이터셋 적재할 테이블 생성
+    """
+    schema = "RAW_DATA"
+
+    logger.info(f"Snowflake {schema} 작업을 시작합니다.")
+    initial_run_sql(
+        initial_sql_filename="reset_tables_for_initial_raw_data.sql",
+        schema=schema,
+    )
+
+def copy_data_from_s3():
+    """
+    Snowflake ECOMMERCE_RAW_DATA Schema의 테이블에 통합 데이터셋 적재
+    """
+    schema = "RAW_DATA"
+
+    logger.info(f"Snowflake {schema} 작업을 시작합니다.")
+    initial_run_sql(
+        initial_sql_filename="copy_into_snowflake_for_initial_raw_data.sql",
+        schema=schema,
+    )
+
+def star_schema_tables():
+    """
+    Star Schema에 기반하여, Snowflake ECOMMERCE_PROCESSED_DATA Schema에 테이블 생성
+    """
+    schema = "PROCESSED_DATA"
+
+    logger.info(f"Snowflake {schema} 작업을 시작합니다.")
+    initial_run_sql(
+        initial_sql_filename="star_schema_for_initial_processed_data.sql",
+        schema=schema,
+    )
+
+def insert_data_to_star_schema_tables():
+    """
+    SnowflakeRaw Data 테이블의 통합 데이터셋을 분리하여 Processed Data 스키마의 테이블에 각각 적재
+    """
+    schema = "PROCESSED_DATA"
+
+    logger.info(f"Snowflake {schema} 작업을 시작합니다.")
+    initial_run_sql(
+        initial_sql_filename="insert_into_initial_processed_data.sql",
+        schema=schema,
+    )
+
+
+# PythonOperator: Snowflake 테이블 리셋 작업
+reset_tables_in_snowflake = PythonOperator(
+    task_id="reset_tables_in_snowflake",
+    python_callable=reset_tables,
+    dag=dag,
+)
+
+# PythonOperator: Snowflake 데이터 로드 작업
+copy_raw_data_into_snowflake = PythonOperator(
+    task_id="copy_raw_data_into_snowflake",
+    python_callable=copy_data_from_s3,
+    dag=dag,
+)
+
+# PythonOperator: Snowflake 데이터 로드 작업
+create_star_schema_tables_in_snowflake = PythonOperator(
+    task_id="create_star_schema_tables_in_snowflake",
+    python_callable=star_schema_tables,
+    dag=dag,
+)
+
+# PythonOperator: Snowflake 데이터 로드 작업
+insert_data_to_star_schema_tables_in_snowflake = PythonOperator(
+    task_id="insert_data_to_star_schema_tables_in_snowflake",
+    python_callable=insert_data_to_star_schema_tables,
+    dag=dag,
+)
+
 # DAG 실행
-extract_and_upload_to_s3 >> transform_and_upload_to_s3
+extract_and_upload_to_s3 >> transform_and_upload_to_s3 >> reset_tables_in_snowflake >> copy_raw_data_into_snowflake >> create_star_schema_tables_in_snowflake >> insert_data_to_star_schema_tables_in_snowflake
