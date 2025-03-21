@@ -1,4 +1,4 @@
-FROM bitnami/spark:3.5.4
+FROM bitnami/spark:3.5.5
 
 USER 0
 
@@ -6,7 +6,7 @@ USER 0
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
     curl \
-    && pip3 install pyspark==3.5.4 \
+    && pip3 install pyspark==3.5.5 \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # 하둡-aws 및 aws-sdk 추가 (S3 연동 설정)
@@ -26,11 +26,19 @@ RUN mkdir -p /opt/bitnami/spark/conf && \
 RUN mkdir -p /sources/spark/conf
 
 
-# spark-defaults.conf 설정 (S3A 파일시스템 사용)
+# spark-defaults.conf 설정 (S3A 파일시스템 사용 및 동적 할당 옵션 추가)
 RUN echo "spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem" >> /opt/bitnami/spark/conf/spark-defaults.conf && \
     echo "spark.hadoop.fs.s3a.aws.credentials.provider=org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider" >> /opt/bitnami/spark/conf/spark-defaults.conf && \
     echo "spark.driver.extraClassPath /opt/bitnami/spark/jars/*" >> /opt/bitnami/spark/conf/spark-defaults.conf && \
-    echo "spark.executor.extraClassPath /opt/bitnami/spark/jars/*" >> /opt/bitnami/spark/conf/spark-defaults.conf
+    echo "spark.executor.extraClassPath /opt/bitnami/spark/jars/*" >> /opt/bitnami/spark/conf/spark-defaults.conf && \
+    echo "spark.dynamicAllocation.enabled true" >> /opt/bitnami/spark/conf/spark-defaults.conf && \
+    echo "spark.dynamicAllocation.minExecutors 1" >> /opt/bitnami/spark/conf/spark-defaults.conf && \
+    echo "spark.dynamicAllocation.maxExecutors 5" >> /opt/bitnami/spark/conf/spark-defaults.conf
+
+
+# 템플릿 파일을 실제 설정 파일로 복사 (Metrics 설정)
+RUN cp /opt/bitnami/spark/conf/metrics.properties.template /opt/bitnami/spark/conf/hadoop-metrics2.properties && \
+    cp /opt/bitnami/spark/conf/metrics.properties.template /opt/bitnami/spark/conf/hadoop-metrics2-s3a-file-system.properties
 
 # 환경 변수 설정
 ENV PYSPARK_PYTHON=python3
