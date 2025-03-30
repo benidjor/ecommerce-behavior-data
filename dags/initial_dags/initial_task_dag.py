@@ -9,7 +9,7 @@ import pandas as pd
 import logging
 
 # load_to_snowflake.py 파일에서 Snowflake 관련 함수들을 import
-from initial_etl import initial_run_sql
+from initial_dags import initial_run_sql
 
 # 로깅 설정
 logger = logging.getLogger(__name__)
@@ -24,6 +24,11 @@ PROCESSED_FOLDER = "processed-data"
 # AWS 자격 증명 가져오기
 aws_hook = AwsBaseHook(aws_conn_id="aws_connection_id", client_type="s3")
 credentials = aws_hook.get_credentials()
+
+context = {
+    "start_date": "2019-10-01",
+    "end_date": "2019-11-25"
+}
 
 default_args = {
     "owner": "airflow",
@@ -103,7 +108,7 @@ def copy_data_from_s3():
 
     logger.info(f"Snowflake {schema} 작업을 시작합니다.")
     initial_run_sql(
-        initial_sql_filename="copy_into_snowflake_for_initial_raw_data.sql",
+        initial_sql_filename="copy_into_snowflake_from_s3.sql",
         schema=schema,
     )
 
@@ -129,7 +134,27 @@ def insert_data_to_star_schema_tables():
     initial_run_sql(
         initial_sql_filename="insert_into_initial_processed_data.sql",
         schema=schema,
+        context=context
     )
+
+def query_for_staging_or_analysis(schema):
+    """
+    PROCESSED_DATA Schema의 테이블을 활용하여, STAGING_DATA or ANALYSIS Schema에 테이블을 생성합니다.
+    """
+    logger.info(f"Snowflake {schema} 작업을 시작합니다.")
+    
+    if schema == "STAGING_DATA":
+        initial_run_sql(
+            initial_sql_filename="query_for_staging_data.sql",
+            schema=schema,
+            context=context
+        )
+    else:
+        initial_run_sql(
+            initial_sql_filename="query_for_analysis.sql",
+            schema=schema,
+            context=context
+        )
 
 
 # PythonOperator: Snowflake 테이블 리셋 작업
@@ -160,5 +185,20 @@ insert_data_to_star_schema_tables_in_snowflake = PythonOperator(
     dag=dag,
 )
 
+create_tables_for_staging_data_schema_in_snowflake = PythonOperator(
+    task_id="create_tables_for_staging_data_schema_in_snowflake",
+    python_callable=query_for_staging_or_analysis,
+    op_kwargs={"schema": "STAGING_DATA"},
+    dag=dag,
+)
+
+create_tables_for_analysis_schema_in_snowflake = PythonOperator(
+    task_id="create_tables_for_analysis_schema_in_snowflake",
+    python_callable=query_for_staging_or_analysis,
+    op_kwargs={"schema": "ANALYSIS"},
+    dag=dag,
+)
+
+
 # DAG 실행
-initial_extract_and_upload_to_s3 >> transform_and_upload_to_s3 >> reset_tables_in_snowflake >> copy_raw_data_into_snowflake >> create_star_schema_tables_in_snowflake >> insert_data_to_star_schema_tables_in_snowflake
+initial_extract_and_upload_to_s3 >> initial_transform_and_upload_to_s3 >> reset_tables_in_snowflake >> copy_raw_data_into_snowflake >> create_star_schema_tables_in_snowflake >> insert_data_to_star_schema_tables_in_snowflake >> create_tables_for_staging_data_schema_in_snowflake >> create_tables_for_analysis_schema_in_snowflake

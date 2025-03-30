@@ -3,12 +3,16 @@
 /* TIME_DIM: 실제 시간 관련 값은 속성 (Attribute)으로 저장, time_id를 Primary Key로 사용 */
 INSERT INTO PROCESSED_DATA.TIME_DIM (event_time, event_time_ymd, event_time_hms, event_time_month, event_time_day, event_time_hour, event_time_day_name)
 SELECT DISTINCT event_time, event_time_ymd, event_time_hms, event_time_month, event_time_day, event_time_hour, event_time_day_name
-FROM raw_data.raw_data;
+FROM raw_data.raw_data
+WHERE event_time BETWEEN '{{ start_date }}' AND '{{ end_date }}';
+
 
 /* CATEGORY_DIM: 제품의 카테고리 정보에 대한 상세 속성을 포함 */
 INSERT INTO PROCESSED_DATA.CATEGORY_DIM (category_id, category_code, category_lv_1, category_lv_2, category_lv_3)
 SELECT DISTINCT category_id, category_code, category_lv_1, category_lv_2, category_lv_3
-FROM raw_data.raw_data;
+FROM raw_data.raw_data
+WHERE event_time BETWEEN '{{ start_date }}' AND '{{ end_date }}';
+
 
 /* PRODUCT_DIM: 제품 관련 정보를 관리하며, product_id를 Primary Key로 사용 
 - brand_frequency CTE: 각 product_id에 대해 브랜드(brand)의 발생 빈도(brand_frequency)를 계산하고, 해당 브랜드의 최신 event_time을 구한다 (빈도 중복 시 최신 데이터에 우선 순위)
@@ -23,6 +27,7 @@ WITH brand_frequency AS (
         COUNT(*) AS brand_frequency,
         MAX(event_time) AS latest_brand_time
     FROM raw_data.raw_data
+    WHERE event_time BETWEEN '{{ start_date }}' AND '{{ end_date }}'
     GROUP BY product_id, brand
 ),
 mode_brand AS (
@@ -42,6 +47,7 @@ price_frequency AS (
         COUNT(*) AS price_frequency,
         MAX(event_time) AS latest_price_time
     FROM raw_data.raw_data
+    WHERE event_time BETWEEN '{{ start_date }}' AND '{{ end_date }}'
     GROUP BY product_id, price
 ),
 mode_price AS (
@@ -68,16 +74,19 @@ WHERE b.rn = 1
 /* USER_DIM: 사용자 정보와 관련된 속성을 저장하며, user_id를 Primary Key로 사용*/
 INSERT INTO PROCESSED_DATA.USER_DIM (user_id, user_session)
 SELECT DISTINCT user_id, user_session
-FROM raw_data.raw_data;
+FROM raw_data.raw_data
+WHERE event_time BETWEEN '{{ start_date }}' AND '{{ end_date }}';
+
 
 /* FACT Table: 핵심 이벤트 정보 (event_type, event_time, product_id, user_id 등)만을 포함 */
 INSERT INTO PROCESSED_DATA.FACT (time_id, category_id, product_id, user_id, user_session, event_type)
-SELECT t.time_id,
-       r.category_id,
-       r.product_id,
-       r.user_id,
-       r.user_session,
-       r.event_type
+SELECT 
+    t.time_id,
+    r.category_id,
+    r.product_id,
+    r.user_id,
+    r.user_session,
+    r.event_type
 FROM raw_data.raw_data AS r
 INNER JOIN PROCESSED_DATA.TIME_DIM AS t
   ON r.event_time = t.event_time

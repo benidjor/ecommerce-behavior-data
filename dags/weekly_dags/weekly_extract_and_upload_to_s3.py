@@ -183,6 +183,8 @@ def main(input_local_path, output_s3_raw_path, aws_access_key, aws_secret_key, s
     # 주 단위 날짜 범위 생성
     weekly_dict = set_filtering_date(weekly_start_date=start_date, weekly_end_date=end_date, freq="7D")
     
+    logger.info(f"작업 시작 날짜: {start_date} ~ {end_date}")
+
     # 업로드가 필요한 주(즉, S3 폴더에 없는 주) 목록을 가져오기
     missing_weeks = get_missing_weeks(weekly_dict, output_s3_raw_path, aws_access_key, aws_secret_key)
     
