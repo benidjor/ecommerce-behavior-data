@@ -1,3 +1,9 @@
+# version: '3.8'
+
+networks:
+  airflow_net:
+    driver: bridge
+
 x-airflow-common: &airflow-common
   build:
     context: .
@@ -12,21 +18,24 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__LOAD_EXAMPLES: 'true'
     AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session'
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
+    PYTHONPATH: "/opt/airflow:/opt/airflow/dags:/opt/airflow/custom_modules"  # custom_modules 추가
   volumes:
     - ./dags:/opt/airflow/dags
     - ./logs:/opt/airflow/logs
     - ./config:/opt/airflow/config
+    - ./custom_modules:/opt/airflow/custom_modules
     - ./plugins:/opt/airflow/plugins
     - ./data:/opt/airflow/data
     - ./spark:/opt/airflow/spark
     - ./sql:/opt/airflow/sql
-
   user: '${AIRFLOW_UID:-50000}:0'
   depends_on: &airflow-common-depends-on
     redis:
       condition: service_healthy
     postgres:
       condition: service_healthy
+  networks:
+    - airflow_net
 
 services:
   postgres:
@@ -43,6 +52,10 @@ services:
       retries: 5
       start_period: 5s
     restart: no
+    networks:
+      airflow_net:
+        aliases:
+          - postgres
 
   redis:
     image: redis:latest
@@ -55,6 +68,8 @@ services:
       retries: 50
       start_period: 30s
     restart: no
+    networks:
+      - airflow_net
 
   airflow-webserver:
     <<: *airflow-common
@@ -75,6 +90,8 @@ services:
     environment:
       <<: *airflow-common-env
       _PIP_ADDITIONAL_REQUIREMENTS: apache-airflow-providers-apache-spark boto3 pandas
+    networks:
+      - airflow_net
 
   airflow-scheduler:
     <<: *airflow-common
@@ -93,6 +110,10 @@ services:
     environment:
       <<: *airflow-common-env
       _PIP_ADDITIONAL_REQUIREMENTS: apache-airflow-providers-apache-spark boto3 pandas
+    extra_hosts:
+    - "postgres:172.20.0.5"
+    networks:
+      - airflow_net
 
   airflow-worker:
     <<: *airflow-common
@@ -112,11 +133,15 @@ services:
       <<: *airflow-common-env
       DUMB_INIT_SETSID: '0'
       _PIP_ADDITIONAL_REQUIREMENTS: apache-airflow-providers-apache-spark boto3 pandas
+    ports:
+      - "4040:4040"   # Spark UI 포트 매핑 추가
     restart: no
     depends_on:
       <<: *airflow-common-depends-on
       airflow-init:
         condition: service_completed_successfully
+    networks:
+      - airflow_net
 
   airflow-triggerer:
     <<: *airflow-common
@@ -139,6 +164,8 @@ services:
     environment:
       <<: *airflow-common-env
       _PIP_ADDITIONAL_REQUIREMENTS: apache-airflow-providers-apache-spark boto3 pandas
+    networks:
+      - airflow_net
 
   airflow-init:
     <<: *airflow-common
@@ -210,6 +237,8 @@ services:
     user: '0:0'
     volumes:
       - ${AIRFLOW_PROJ_DIR:-.}:/sources
+    networks:
+      - airflow_net
 
   airflow-cli:
     <<: *airflow-common
@@ -226,6 +255,8 @@ services:
       <<: *airflow-common-depends-on
       airflow-init:
         condition: service_completed_successfully
+    networks:
+      - airflow_net
 
   spark-master:
     build:
@@ -247,7 +278,7 @@ services:
       - ./spark:/opt/spark
       - ./spark/conf:/opt/bitnami/spark/conf
       - ./data:/opt/airflow/data
-    user: "1001:1001"  # 👈 spark 사용자가 실행하도록 설정
+    user: "1001:1001"
     depends_on:
       - redis
       - postgres
@@ -258,6 +289,8 @@ services:
       retries: 5
       start_period: 30s
     restart: no
+    networks:
+      - airflow_net
 
   spark-worker:
     build:
@@ -267,7 +300,7 @@ services:
       - SPARK_MODE=worker
       - SPARK_MASTER_URL=spark://spark-master:7077
       - SPARK_WORKER_CORES=2
-      - SPARK_WORKER_MEMORY=2G
+      - SPARK_WORKER_MEMORY=6G
       - SPARK_RPC_AUTHENTICATION_ENABLED=no
       - SPARK_RPC_ENCRYPTION_ENABLED=no
       - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
@@ -287,6 +320,8 @@ services:
       retries: 5
       start_period: 30s
     restart: no
+    networks:
+      - airflow_net
 
 volumes:
   postgres-db-volume:

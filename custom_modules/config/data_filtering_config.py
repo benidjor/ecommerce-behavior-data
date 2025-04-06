@@ -1,0 +1,6 @@
+# 데이터 필터링 관련 기본 설정 값
+BASE_PATH = "/opt/airflow/data"
+
+DEFAULT_WEEKLY_START_DATE = "2019-10-01"
+DEFAULT_WEEKLY_END_DATE = "2020-01-04"
+DEFAULT_FREQ = "7D"
