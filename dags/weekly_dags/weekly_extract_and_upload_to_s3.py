@@ -217,7 +217,7 @@ def main(input_local_path, output_s3_raw_path, aws_access_key, aws_secret_key, s
         try:
             s3_path = f"s3a://{S3_BUCKET_NAME}/{s3_prefix}"
             logger.info(f"일주일 ({missing_weekly_start_date} ~ {missing_weekly_end_date}) 데이터를 S3에 저장합니다 ({s3_path})")
-            weekly_filtered_df.orderBy("event_time", "user_id").show(3, truncate=False)
+            # weekly_filtered_df.orderBy("event_time", "user_id").show(3, truncate=False)
             
             weekly_filtered_df.write.mode("overwrite").parquet(s3_path)
             logger.info(f"일주일 ({missing_weekly_start_date} ~ {missing_weekly_end_date}) 데이터 업로드 완료.")

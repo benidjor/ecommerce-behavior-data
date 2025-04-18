@@ -56,10 +56,10 @@ application_args=[
 ]
 
 conf = {
-    "spark.executor.memory": "6g",
+    "spark.executor.memory": "4g",
     "spark.executor.cores": "2",
     "spark.executor.instances": "2",  # 고정 Executor 2개 사용
-    "spark.driver.memory": "1g",
+    "spark.driver.memory": "2g",
     "spark.hadoop.fs.s3a.impl": "org.apache.hadoop.fs.s3a.S3AFileSystem",
     "spark.hadoop.fs.s3a.endpoint": "s3.amazonaws.com",
     "spark.hadoop.fs.s3a.access.key": credentials.access_key,

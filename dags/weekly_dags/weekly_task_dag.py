@@ -23,10 +23,10 @@ RAW_FOLDER = "raw-data"
 PROCESSED_FOLDER = "processed-data"
 
 # 테스트 모드 설정
-TEST_MODE = True  # True면 20분 간격, False면 주간 실행
+TEST_MODE = True  # True면 30분 간격, False면 주간 실행
 
 # 스케줄 간격 설정
-schedule_interval = "*/20 * * * *" if TEST_MODE else "@weekly"
+schedule_interval = "*/30 * * * *" if TEST_MODE else "@weekly"
 
 # 초기 데이터 시작 시점
 START_DATE = datetime(2019, 11, 26)
@@ -115,10 +115,10 @@ application_args=[
 ]
 
 conf = {
-    "spark.executor.memory": "6g",
+    "spark.executor.memory": "4g",
     "spark.executor.cores": "2",
     "spark.executor.instances": "2",  # 고정 Executor 2개 사용
-    "spark.driver.memory": "1g",
+    "spark.driver.memory": "2g",
     "spark.hadoop.fs.s3a.impl": "org.apache.hadoop.fs.s3a.S3AFileSystem",
     "spark.hadoop.fs.s3a.endpoint": "s3.amazonaws.com",
     "spark.hadoop.fs.s3a.access.key": credentials.access_key,

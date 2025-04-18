@@ -104,6 +104,7 @@ def impute_by_mode_value(df: DataFrame, group_col: str, target_col: str) -> Data
         .groupBy(group_col, target_col)
         .agg(F.count("*").alias("count"))
     )
+    value_counts.cache()  # 중간 결과 캐싱으로 반복 연산 최소화
     
     # 4. Window 함수를 이용해 그룹별로 count 내림차순 정렬 후 최빈값 선택
     window_spec = Window.partitionBy(group_col).orderBy(F.col("count").desc(), F.col(target_col))
@@ -115,16 +116,21 @@ def impute_by_mode_value(df: DataFrame, group_col: str, target_col: str) -> Data
         .select(group_col, F.col(target_col).alias(f"most_frequent_{target_col}"))
     )
     
-    # 5. mode_df를 브로드캐스트하여 조인 성능 향상
-    mode_df = F.broadcast(mode_df)
+    # # 5. mode_df를 브로드캐스트하여 조인 성능 향상
+    # mode_df = F.broadcast(mode_df)
     
-    # 6. 원본 데이터와 조인한 후, target_col이 NULL인 경우에만 최빈값으로 대체
-    df_imputed = (
-        df
-        .join(mode_df, on=group_col, how="left")
-        .withColumn(target_col, F.coalesce(F.col(target_col), F.col(f"most_frequent_{target_col}")))
-        .drop(f"most_frequent_{target_col}")
-    )
+    # # 6. 원본 데이터와 조인한 후, target_col이 NULL인 경우에만 최빈값으로 대체
+    # df_imputed = (
+    #     df
+    #     .join(mode_df, on=group_col, how="left")
+    #     .withColumn(target_col, F.coalesce(F.col(target_col), F.col(f"most_frequent_{target_col}")))
+    #     .drop(f"most_frequent_{target_col}")
+    # )
+
+    # 5. 브로드캐스트 조인 적용 (인라인 방식)
+    df_imputed = df.join(F.broadcast(mode_df), on=group_col, how="left") \
+                   .withColumn(target_col, F.coalesce(F.col(target_col), F.col(f"most_frequent_{target_col}"))) \
+                   .drop(f"most_frequent_{target_col}")
     
     return df_imputed
 
@@ -402,16 +408,20 @@ def main(output_s3_processed_path, aws_access_key, aws_secret_key, start_date, e
         if initial_partitions < desired_partitions:
             df_raw = df_raw.repartition(desired_partitions)
             logger.info(f"데이터를 {desired_partitions}개의 파티션으로 재분배(repartition) 하였습니다.")
+        
+        # event_time 컬럼에 NULL 값이 없는 데이터만 필터링하고, 그 결과를 캐싱
+        df_filtered = df_raw.filter(F.col("event_time").isNotNull())
+        df_filtered.cache()  # 필터링된 DataFrame만 캐싱하여 메모리 사용 최적화
+        logger.info("Filtered DataFrame has been cached.")
 
         # Transform 작업: 결측치 처리 및 컬럼 분리/재배치 전에 cache 적용
         df_transformed = (
-            df_raw
-            .cache()  # 동일 데이터 재사용 시 재계산을 방지
+            df_filtered
             .transform(imputation_process) # 결측치 처리
             .transform(lambda df: seperate_and_reorder_cols(df, "category_code", "event_time", new_column_order)) # 컬럼 분리 및 재배치
         )
 
-        df_transformed.orderBy("event_time", "user_id").show(3, truncate=False)
+        # df_transformed.orderBy("event_time", "user_id").show(3, truncate=False)
         # Transform 이후 파티션 수 확인 (최적화 결과 확인 용)
         final_partitions = df_transformed.rdd.getNumPartitions()
         logger.info(f"Transform 후 데이터의 파티션 수: {final_partitions}")
