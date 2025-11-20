@@ -87,7 +87,6 @@
 | **데이터 시각화** | Preset.io (Apache Superset) |
 | **컨테이너화** | Docker, Docker Compose |
 | **언어** | Python 3.x, SQL |
-| **메시지 브로커** | Redis |
 | **데이터베이스** | PostgreSQL 13 (Airflow Metadata) |
 
 ---
@@ -124,34 +123,11 @@ ecommerce-behavior-data/
 │       └── snowflake_config.py          # Snowflake 연결 설정
 │
 ├── sql/                                 # SQL 쿼리 템플릿 (Jinja2)
-│   ├── reset_tables_for_initial_raw_data.sql
-│   ├── copy_into_snowflake_from_s3.sql
-│   ├── star_schema_for_initial_processed_data.sql
-│   ├── insert_into_initial_processed_data.sql
-│   ├── query_for_staging_data.sql
-│   ├── query_for_analysis.sql
-│   ├── weekly_copy_into_snowflake_from_s3.sql
-│   ├── weekly_insert_into_initial_processed_data.sql
-│   ├── weekly_query_for_staging_data.sql
-│   └── weekly_query_for_analysis.sql
-│
-├── data/                                # 로컬 데이터 디렉토리
-│   ├── raw_data/                        # 원본 CSV 파일
-│   │   ├── 2019-Oct.csv
-│   │   ├── 2019-Nov.csv
-│   │   ├── 2019-Dec.csv
-│   │   ├── 2020-Jan.csv
-│   │   ├── 2020-Feb.csv
-│   │   ├── 2020-Mar.csv
-│   │   └── 2020-Apr.csv
-│   └── parquet_data/                    # Parquet 변환 데이터
-│       └── total_merged_parquet/        # 병합된 Parquet 파일
 │
 ├── logs/                                # Airflow 로그 디렉토리
 ├── plugins/                             # Airflow 플러그인
 ├── config/                              # Airflow 설정 파일
 ├── spark/                               # Spark 설정 디렉토리
-│   └── conf/                            # Spark 설정 파일
 │
 ├── docker-compose.yaml                  # Docker Compose 설정
 ├── Dockerfile.airflow                   # Airflow 컨테이너 이미지
@@ -159,7 +135,7 @@ ecommerce-behavior-data/
 │
 ├── convert_to_parquet_with_spark.ipynb  # CSV → Parquet 변환 노트북
 ├── read_parquet.ipynb                   # Parquet 데이터 검증 노트북
-└── README.md                            # 프로젝트 문서 (본 파일)
+└── README.md                            # 프로젝트 문서
 ```
 
 ---
