@@ -129,7 +129,6 @@ services:
       <<: *airflow-common-env
       DUMB_INIT_SETSID: '0'
       _PIP_ADDITIONAL_REQUIREMENTS: apache-airflow-providers-apache-spark boto3 pandas
-      PYTHONPATH: /opt/airflow/dags    # ← DAGs 경로 추가
     ports:
       - "4040:4040"   # Spark UI 포트 매핑 추가
     restart: no
@@ -276,7 +275,6 @@ services:
       - ./spark:/opt/spark
       - ./spark/conf:/opt/bitnami/spark/conf
       - ./data:/opt/airflow/data
-      - ./dags:/opt/airflow/dags      # ← 추가
     user: "1001:1001"
     depends_on:
       - redis
