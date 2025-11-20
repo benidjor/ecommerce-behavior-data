@@ -1,11 +1,3 @@
--- /* Snowflake Stream 생성 */
--- USE SCHEMA raw_data
-
--- CREATE OR REPLACE STREAM raw_data_stream
---   ON TABLE ECOMMERCE_DATA.raw_data.raw_data
---   APPEND_ONLY = TRUE
-
-
 -- Raw data 테이블에 데이터 적재
 COPY INTO ECOMMERCE_DATA.RAW_DATA.RAW_DATA
 FROM @ECOMMERCE_DATA.RAW_DATA.S3_ECOMMERCE_STAGE

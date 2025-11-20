@@ -1,133 +1,164 @@
--- USE SCHEMA PROCESSED_DATA;
+-- =============================================
+-- 1) TIME_DIM Upsert
+--    • RAW_DATA 테이블에서 날짜 범위만 직접 조회
+-- =============================================
+MERGE INTO ECOMMERCE_DATA.PROCESSED_DATA.TIME_DIM AS tgt
+USING (
+  SELECT DISTINCT
+    r.event_time,
+    r.event_time_ymd,
+    r.event_time_hms,
+    r.event_time_month,
+    r.event_time_day,
+    r.event_time_hour,
+    r.event_time_day_name
+  FROM ECOMMERCE_DATA.RAW_DATA.RAW_DATA AS r
+  WHERE r.event_time BETWEEN '{{ start_date }}' AND '{{ end_date }}'  -- 날짜 필터링[^1]
+) AS src
+  ON   tgt.event_time          = src.event_time
+    AND tgt.event_time_ymd      = src.event_time_ymd
+    AND tgt.event_time_hms      = src.event_time_hms
+    AND tgt.event_time_month    = src.event_time_month
+    AND tgt.event_time_day      = src.event_time_day
+    AND tgt.event_time_hour     = src.event_time_hour
+    AND tgt.event_time_day_name = src.event_time_day_name
+WHEN NOT MATCHED THEN
+  INSERT (
+    event_time, event_time_ymd, event_time_hms,
+    event_time_month, event_time_day, event_time_hour, event_time_day_name
+  )
+  VALUES (
+    src.event_time, src.event_time_ymd, src.event_time_hms,
+    src.event_time_month, src.event_time_day, src.event_time_hour, src.event_time_day_name
+  );
 
--- CREATE OR REPLACE STREAM time_dim_processed_data_stream
---   ON TABLE ECOMMERCE_DATA.PROCESSED_DATA.TIME_DIM
---   APPEND_ONLY = TRUE;
+-- =============================================
+-- 2) CATEGORY_DIM Upsert
+--    • RAW_DATA 테이블에서 날짜 범위에 해당하는 카테고리 정보만 조회
+-- =============================================
+MERGE INTO ECOMMERCE_DATA.PROCESSED_DATA.CATEGORY_DIM AS tgt
+USING (
+  SELECT DISTINCT
+    r.category_id,
+    r.category_code,
+    r.category_lv_1,
+    r.category_lv_2,
+    r.category_lv_3
+  FROM ECOMMERCE_DATA.RAW_DATA.RAW_DATA AS r
+  WHERE r.event_time BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+) AS src
+  ON tgt.category_id = src.category_id
+WHEN NOT MATCHED THEN
+  INSERT (category_id, category_code, category_lv_1, category_lv_2, category_lv_3)
+  VALUES (src.category_id, src.category_code, src.category_lv_1, src.category_lv_2, src.category_lv_3);
 
--- CREATE OR REPLACE STREAM category_dim_processed_data_stream
---   ON TABLE ECOMMERCE_DATA.PROCESSED_DATA.CATEGORY_DIM
---   APPEND_ONLY = TRUE;
-
--- CREATE OR REPLACE STREAM product_dim_processed_data_stream
---   ON TABLE ECOMMERCE_DATA.PROCESSED_DATA.PRODUCT_DIM
---   APPEND_ONLY = TRUE;
-
--- CREATE OR REPLACE STREAM user_dim_processed_data_stream
---   ON TABLE ECOMMERCE_DATA.PROCESSED_DATA.USER_DIM
---   APPEND_ONLY = TRUE;
-
--- CREATE OR REPLACE STREAM fact_processed_data_stream
---   ON TABLE ECOMMERCE_DATA.PROCESSED_DATA.FACT
---   APPEND_ONLY = TRUE;
-
--- -- 스트림 데이터를 한 번 조회하여 임시 테이블에 저장
--- CREATE OR REPLACE TEMPORARY TABLE raw_data_stream_tmp AS
--- SELECT *
--- FROM ECOMMERCE_DATA.RAW_DATA.RAW_DATA_STREAM;
--- -- WHERE event_time BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-
-
-/* 1. Raw Data 테이블의 통합 데이터셋을 분리하여 Processed Data 스키마의 테이블에 각각 적재 */
-
-/* TIME_DIM: 실제 시간 관련 값은 속성 (Attribute)으로 저장, time_id를 Primary Key로 사용 */
-INSERT INTO PROCESSED_DATA.TIME_DIM (event_time, event_time_ymd, event_time_hms, event_time_month, event_time_day, event_time_hour, event_time_day_name)
-SELECT DISTINCT event_time, event_time_ymd, event_time_hms, event_time_month, event_time_day, event_time_hour, event_time_day_name
-FROM ECOMMERCE_DATA.RAW_DATA.RAW_DATA
--- FROM raw_data_stream_tmp
-WHERE event_time BETWEEN '{{ start_date }}' AND '{{ end_date }}';
-
-
-/* CATEGORY_DIM: 제품의 카테고리 정보에 대한 상세 속성을 포함 */
-INSERT INTO PROCESSED_DATA.CATEGORY_DIM (category_id, category_code, category_lv_1, category_lv_2, category_lv_3)
-SELECT DISTINCT category_id, category_code, category_lv_1, category_lv_2, category_lv_3
-FROM ECOMMERCE_DATA.RAW_DATA.RAW_DATA
--- FROM raw_data_stream_tmp
-WHERE event_time BETWEEN '{{ start_date }}' AND '{{ end_date }}';
-
-
-/* PRODUCT_DIM: 제품 관련 정보를 관리하며, product_id를 Primary Key로 사용 
-- brand_frequency CTE: 각 product_id에 대해 브랜드(brand)의 발생 빈도(brand_frequency)를 계산하고, 해당 브랜드의 최신 event_time을 구한다 (빈도 중복 시 최신 데이터에 우선 순위)
-- mode_brand CTE: 각 product_id 그룹 내에서 브랜드의 빈도와 최신 event_time을 기준으로 순위 파악
-- price_frequency CTE: 원본 데이터(ECOMMERCE_DATA.RAW_DATA.RAW_DATA_STREAM)에서 각 제품(product_id)별, 브랜드(brand), 그리고 가격(price)의 발생 빈도와 최신 적용 시점(event_time)을 집계
-- mode_price CTE: price_frequency에서 집계된 데이터를 기반으로, 각 제품과 브랜드 그룹별로 대표 가격(최빈값)을 결정하기 위한 순위 파악 */
-INSERT INTO PROCESSED_DATA.PRODUCT_DIM (product_id, brand, price)
-WITH brand_frequency AS (
+-- =============================================
+-- 3) PRODUCT_DIM Upsert
+--    • Brand 및 Price 최빈값(mode) 기준으로 Upsert
+-- =============================================
+MERGE INTO ECOMMERCE_DATA.PROCESSED_DATA.PRODUCT_DIM AS tgt
+USING (
+  WITH brand_frequency AS (
     SELECT
-        product_id,
-        brand,
-        COUNT(*) AS brand_frequency,
-        MAX(event_time) AS latest_brand_time
-    FROM ECOMMERCE_DATA.RAW_DATA.RAW_DATA
-    -- FROM raw_data_stream_tmp
-    WHERE event_time BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-    GROUP BY product_id, brand
-),
-mode_brand AS (
+      r.product_id,
+      r.brand,
+      COUNT(*) AS brand_frequency,
+      MAX(r.event_time) AS latest_brand_time
+    FROM ECOMMERCE_DATA.RAW_DATA.RAW_DATA AS r
+    WHERE r.event_time BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+    GROUP BY r.product_id, r.brand
+  ),
+  mode_brand AS (
     SELECT
-        product_id,
-        brand,
-        ROW_NUMBER() OVER (
-            PARTITION BY product_id
-            ORDER BY brand_frequency DESC, latest_brand_time DESC
-        ) AS rn
+      product_id,
+      brand,
+      ROW_NUMBER() OVER (
+        PARTITION BY product_id
+        ORDER BY brand_frequency DESC, latest_brand_time DESC
+      ) AS rn
     FROM brand_frequency
-),
-price_frequency AS (
+  ),
+  price_frequency AS (
     SELECT
-        product_id,
-        price,
-        COUNT(*) AS price_frequency,
-        MAX(event_time) AS latest_price_time
-    FROM ECOMMERCE_DATA.RAW_DATA.RAW_DATA
-    -- FROM raw_data_stream_tmp
-    WHERE event_time BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-    GROUP BY product_id, price
-),
-mode_price AS (
+      r.product_id,
+      r.price,
+      COUNT(*) AS price_frequency,
+      MAX(r.event_time) AS latest_price_time
+    FROM ECOMMERCE_DATA.RAW_DATA.RAW_DATA AS r
+    WHERE r.event_time BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+    GROUP BY r.product_id, r.price
+  ),
+  mode_price AS (
     SELECT
-        product_id,
-        price,
-        ROW_NUMBER() OVER (
-            PARTITION BY product_id
-            ORDER BY price_frequency DESC, latest_price_time DESC
-        ) AS rn
+      product_id,
+      price,
+      ROW_NUMBER() OVER (
+        PARTITION BY product_id
+        ORDER BY price_frequency DESC, latest_price_time DESC
+      ) AS rn
     FROM price_frequency
-)
-SELECT 
+  )
+  SELECT 
     b.product_id,
     b.brand,
     p.price
-FROM mode_brand b
-JOIN mode_price p 
+  FROM mode_brand b
+  JOIN mode_price p 
     ON b.product_id = p.product_id
-WHERE b.rn = 1 
-  AND p.rn = 1;
+  WHERE b.rn = 1 AND p.rn = 1
+) AS src
+  ON tgt.product_id = src.product_id
+WHEN NOT MATCHED THEN
+  INSERT (product_id, brand, price)
+  VALUES (src.product_id, src.brand, src.price);
 
+-- =============================================
+-- 4) USER_DIM Upsert
+--    • 사용자 정보(세션) 조회
+-- =============================================
+MERGE INTO ECOMMERCE_DATA.PROCESSED_DATA.USER_DIM AS tgt
+USING (
+  SELECT DISTINCT
+    r.user_id,
+    r.user_session
+  FROM ECOMMERCE_DATA.RAW_DATA.RAW_DATA AS r
+  WHERE r.event_time BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+) AS src
+  ON tgt.user_id = src.user_id
+WHEN NOT MATCHED THEN
+  INSERT (user_id, user_session)
+  VALUES (src.user_id, src.user_session);
 
-/* USER_DIM: 사용자 정보와 관련된 속성을 저장하며, user_id를 Primary Key로 사용*/
-INSERT INTO PROCESSED_DATA.USER_DIM (user_id, user_session)
-SELECT DISTINCT user_id, user_session
-FROM ECOMMERCE_DATA.RAW_DATA.RAW_DATA
--- FROM raw_data_stream_tmp
-WHERE event_time BETWEEN '{{ start_date }}' AND '{{ end_date }}'
-
-
-/* FACT Table: 핵심 이벤트 정보 (event_type, event_time, product_id, user_id 등)만을 포함 */
-INSERT INTO PROCESSED_DATA.FACT (time_id, category_id, product_id, user_id, user_session, event_type)
-SELECT 
+-- =============================================
+-- 5) FACT Upsert
+--    • TIME_DIM과 조인하여 최종 Fact 적재
+-- =============================================
+MERGE INTO ECOMMERCE_DATA.PROCESSED_DATA.FACT AS tgt
+USING (
+  SELECT
     t.time_id,
     r.category_id,
     r.product_id,
     r.user_id,
     r.user_session,
     r.event_type
-FROM ECOMMERCE_DATA.RAW_DATA.RAW_DATA AS r
--- FROM raw_data_stream_tmp AS r
-INNER JOIN PROCESSED_DATA.TIME_DIM AS t
-  ON r.event_time = t.event_time
-  AND r.event_time_ymd = t.event_time_ymd
-  AND r.event_time_hms = t.event_time_hms
-  AND r.event_time_month = t.event_time_month
-  AND r.event_time_day = t.event_time_day
-  AND r.event_time_hour = t.event_time_hour
-  AND r.event_time_day_name = t.event_time_day_name;
+  FROM ECOMMERCE_DATA.RAW_DATA.RAW_DATA AS r
+  JOIN ECOMMERCE_DATA.PROCESSED_DATA.TIME_DIM AS t
+    ON   r.event_time          = t.event_time
+     AND r.event_time_ymd      = t.event_time_ymd
+     AND r.event_time_hms      = t.event_time_hms
+     AND r.event_time_month    = t.event_time_month
+     AND r.event_time_day      = t.event_time_day
+     AND r.event_time_hour     = t.event_time_hour
+     AND r.event_time_day_name = t.event_time_day_name
+  WHERE r.event_time BETWEEN '{{ start_date }}' AND '{{ end_date }}'
+) AS src
+  ON   tgt.time_id      = src.time_id
+    AND tgt.category_id  = src.category_id
+    AND tgt.product_id   = src.product_id
+    AND tgt.user_id      = src.user_id
+    AND tgt.user_session = src.user_session
+    AND tgt.event_type   = src.event_type
+WHEN NOT MATCHED THEN
+  INSERT (time_id, category_id, product_id, user_id, user_session, event_type)
+  VALUES (src.time_id, src.category_id, src.product_id, src.user_id, src.user_session, src.event_type);
