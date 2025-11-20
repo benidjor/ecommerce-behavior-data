@@ -267,6 +267,7 @@ services:
       - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
       - SPARK_SSL_ENABLED=no
       - SPARK_USER=spark
+      - PYTHONPATH=/opt/airflow/dags   # ← 추가
     ports:
       - '7077:7077' # Spark Master 포트
       - '8081:8081' # Spark Master WebUI 포트
@@ -302,10 +303,12 @@ services:
       - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
       - SPARK_SSL_ENABLED=no
       - SPARK_USER=spark
+      - PYTHONPATH=/opt/airflow/dags   # ← 추가
     volumes:
       - ./spark:/opt/spark
       - ./spark/conf:/opt/bitnami/spark/conf
       - ./data:/opt/airflow/data
+      - ./dags:/opt/airflow/dags      # ← 추가
     user: "1001:1001"
     depends_on:
       - spark-master
