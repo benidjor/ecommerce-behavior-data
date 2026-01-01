@@ -68,7 +68,7 @@ docker-compose up -d
 docker-compose ps
 ```
 
-모든 서비스가 `healthy` 또는 `running` 상태인지 확인하세요.
+모든 서비스가 `healthy` 또는 `running` 상태인지 확인이 필요합니다.
 
 ---
 

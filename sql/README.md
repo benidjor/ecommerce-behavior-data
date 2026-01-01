@@ -33,7 +33,7 @@ ECOMMERCE_DATA (Database)
 ## 1. RAW_DATA Schema
 
 ### 목적
-S3에서 직접 복사된 원본 데이터를 저장하는 스키마입니다. 데이터의 원형을 보존하며, 추후 재처리나 감사(Audit)가 필요할 때 사용됩니다.
+S3에서 직접 복사된 원본 데이터를 저장하는 스키마입니다.<br> 데이터의 원형을 보존하며, 추후 재처리나 감사(Audit)가 필요할 때 사용됩니다.
 
 ### 테이블: ECOMMERCE_EVENTS
 
@@ -87,7 +87,7 @@ ON_ERROR = CONTINUE;
 ## 2. PROCESSED_DATA Schema
 
 ### 목적
-Star Schema 기반으로 정규화된 데이터 구조를 제공합니다. Fact 테이블과 여러 Dimension 테이블로 구성되어 있으며, 효율적인 분석 쿼리를 위해 설계되었습니다.
+Star Schema 기반으로 정규화된 데이터 구조를 제공합니다.<br> Fact 테이블과 여러 Dimension 테이블로 구성되어 있으며, 효율적인 분석 쿼리를 위해 설계되었습니다.
 
 ### Star Schema 설계
 
@@ -297,7 +297,7 @@ LIMIT 10;
 ## 3. STAGING_DATA Schema
 
 ### 목적
-분석을 위한 중간 집계 테이블들을 저장합니다. RAW_DATA나 PROCESSED_DATA를 기반으로 생성되며, 복잡한 비즈니스 로직이 적용된 데이터를 포함합니다.
+분석을 위한 중간 집계 테이블들을 저장합니다. <br>RAW_DATA나 PROCESSED_DATA를 기반으로 생성되며, 복잡한 비즈니스 로직이 적용된 데이터를 포함합니다.
 
 ### 특징
 - 반복적으로 사용되는 집계 쿼리의 결과를 저장
@@ -325,7 +325,7 @@ GROUP BY t.event_time_ymd, f.event_type;
 ## 4. ANALYSIS Schema
 
 ### 목적
-최종 분석 및 리포팅을 위한 집계 테이블들을 저장합니다. Preset.io 또는 Tableau와 같은 BI 도구에서 직접 사용됩니다.
+최종 분석 및 리포팅을 위한 집계 테이블들을 저장합니다. <br> Apache Superset 또는 Tableau와 같은 BI 도구에서 직접 사용됩니다.
 
 ### 특징
 - 비즈니스 질문에 대한 직접적인 답변 제공
@@ -413,7 +413,7 @@ rendered_sql = template.render(
     end_date='2019-11-25'
 )
 ```
-
+<!-- 
 ---
 
 ## 데이터 모델링 모범 사례
@@ -520,4 +520,4 @@ FROM FACT f
 LEFT JOIN TIME_DIM t ON f.time_id = t.time_id
 WHERE t.time_id IS NULL;
 ```
-
+ -->

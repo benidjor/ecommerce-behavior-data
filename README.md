@@ -2,78 +2,33 @@
 
 ## 프로젝트 개요
 
-이 프로젝트는 E-Commerce 사용자 행동 데이터를 수집, 처리, 분석하기 위한 end-to-end 데이터 파이프라인입니다. <br>**Apache Airflow**로 워크플로우를 오케스트레이션하고, **Apache Spark**로 대용량 데이터를 분산 처리하며, **AWS S3**에 데이터를 저장하고, **Snowflake**에서 데이터 웨어하우스를 구축하여 분석 가능한 형태로 데이터를 변환합니다.
+### 배경 및 데이터 소개
+- 데이터가 주기적으로 업데이트되는 환경을 가정, 과거 시점의 데이터를 현재 실행한다고 가정하고 시간의 흐름에 따라 처리
+- Kaggle eCommerce behavior data from multi category store 데이터 [출처](https://www.kaggle.com/datasets/mkechinov/ecommerce-behavior-data-from-multi-category-store)
+
+### 목표
+- 이커머스 데이터 기반, 데이터 엔지니어링 파이프라인 구축
+     - Airflow를 통한 1주 단위 ETL, ELT 자동화
+     - 기존 데이터 (**Initial Pipeline, 2019-10-01 ~ 2019-11-25**)
+     - 일주일 단위로 새롭게 적재된다고 가정한 데이터 (**Weekly Batch Pipeline, 2019-11-26 ~ 2020-04-30**)
+- Dashboard 업데이트를 통한 트렌드 분석 및 인사이트 도출
 
 ### 주요 특징
 
-- **자동화된 ETL 파이프라인**: Initial 및 Weekly 파이프라인을 통한 체계적인 데이터 처리
+- **자동화된 ETL, ELT 파이프라인**: Initial 및 Weekly 파이프라인을 통한 체계적인 데이터 처리
 - **분산 처리**: Apache Spark를 활용한 대용량 데이터 처리
 - **클라우드 저장소**: AWS S3를 활용한 데이터 레이크 구축
 - **데이터 웨어하우스**: Snowflake에서 Star Schema 기반 분석 환경 구축
 - **컨테이너화**: Docker Compose를 통한 간편한 배포 및 관리
 - **데이터 분석**: Staging 및 Analysis 스키마를 통한 다차원 분석
-- **데이터 시각화**: Preset.io를 통한 대시보드 및 차트 시각화
+- **데이터 시각화**: Apache Superset (Preset.io)를 통한 대시보드 및 차트 시각화
 
 ---
 
 ## 아키텍처
+![아키텍처](https://i.imgur.com/xcxGNU3.png)
 
-```
-┌─────────────────┐
-│   Raw CSV Data  │
-│   (Local Data)  │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────────────────────────────────────────┐
-│              Apache Airflow (Orchestrator)          │
-│  ┌──────────────────┐      ┌──────────────────┐     │
-│  │ Initial Pipeline │      │ Weekly Pipeline  │     │
-│  │  (One-time)      │      │  (Scheduled)     │     │
-│  └──────────────────┘      └──────────────────┘     │
-└─────────────────────────────────────────────────────┘
-         │                              │
-         ▼                              ▼
-┌─────────────────────────────────────────────────────┐
-│              Apache Spark Cluster                   │
-│  ┌─────────────┐                                    │
-│  │ Spark Master│ ←→ Spark Workers                   │
-│  │  (Compute)  │     (Distributed Processing)       │
-│  └─────────────┘                                    │
-└─────────────────────────────────────────────────────┘
-         │                              │
-         ▼                              ▼
-    Extract & Transform         Extract & Transform
-         │                              │
-         ▼                              ▼
-┌─────────────────────────────────────────────────────┐
-│                    AWS S3                           │
-│  ┌──────────────┐          ┌──────────────┐         │
-│  │  raw-data/   │          │ processed-   │         │
-│  │  (Parquet)   │          │ data/        │         │
-│  └──────────────┘          └──────────────┘         │
-└─────────────────────────────────────────────────────┘
-         │                              │
-         ▼                              ▼
-┌─────────────────────────────────────────────────────┐
-│              Snowflake Data Warehouse               │
-│  ┌─────────────┐  ┌──────────────┐ ┌────────────┐   │
-│  │  RAW_DATA   │  │ PROCESSED_   │ │ STAGING_   │   │
-│  │  (Schema)   │  │ DATA (Star   │ │ DATA &     │   │
-│  │             │  │ Schema)      │ │ ANALYSIS   │   │
-│  └─────────────┘  └──────────────┘ └──────┬─────┘   │
-└─────────────────────────────────────────────┼───────┘
-                                              │
-                                              ▼
-                                    ┌──────────────────┐
-                                    │   Preset.io      │
-                                    │  (Visualization) │
-                                    │                  │
-                                    │  - Dashboards    │
-                                    │  - Charts        │
-                                    │  - Reports       │
-                                    └──────────────────┘
-```
+
 
 ---
 
@@ -81,7 +36,7 @@
 
 | 카테고리 | 기술 |
 |---------|------|
-| **오케스트레이션** | Apache Airflow 2.9.1 (CeleryExecutor) |
+| **오케스트레이션** | Apache Airflow 2.9.1 |
 | **분산 처리** | Apache Spark 3.5.5 |
 | **데이터 저장소** | AWS S3, Snowflake Data Warehouse |
 | **데이터 시각화** | Preset.io (Apache Superset) |
@@ -150,11 +105,10 @@ ecommerce-behavior-data/
 
 1. **환경 변수 설정**: `.env` 파일 생성
 2. **Docker 실행**: `docker-compose up -d`
-3. **Airflow UI 접속**: `http://localhost:8080` (admin/admin)
+3. **Airflow UI 접속**: `http://localhost:8080`
 4. **Connections 설정**: AWS, Snowflake, Spark 연결 구성
-5. **파이프라인 실행**: `initial_pipeline` DAG 활성화 및 트리거
+5. **파이프라인 실행**: `initial_pipeline`/ `weekly_pipeline` DAG 활성화 및 트리거
 
-자세한 내용은 [시작 가이드 문서](dags/initial_pipeline/README.md)를 확인바랍니다.
 
 ---
 
@@ -168,11 +122,10 @@ Snowflake Data Warehouse의 스키마 구조 및 테이블 정의에 대한 상�
 
 프로젝트는 Star Schema 기반의 3개 주요 스키마로 구성됩니다:
 
-1. **RAW_DATA**: S3에서 복사된 원본 데이터
+1. **RAW_DATA**: S3에서 복사된 원본 데이터 (최소한의 전처리)
 2. **PROCESSED_DATA**: Star Schema (Fact + Dimension Tables)
 3. **STAGING_DATA & ANALYSIS**: 집계 및 분석용 테이블
 
-자세한 테이블 정의, 컬럼 설명, 쿼리 예시는 [데이터 스키마 문서](sql/README.md)를 확인바랍니다
 
 ### ERD
 ![Snowflake ERD](https://i.imgur.com/VnvoQMm.png)
@@ -226,11 +179,10 @@ Preset.io(Apache Superset)를 활용하여 Snowflake의 ANALYSIS 스키마 데�
 
 ### 1. 자동화된 데이터 증분 처리
 - Weekly Pipeline은 Airflow Variable을 활용하여 이미 처리된 데이터를 건너뛰고 새로운 데이터만 처리
-- S3 경로 존재 여부를 확인하여 중복 업로드 방지
+- 날짜 필터링을 통한 S3 경로 존재 여부를 확인하여 중복 업로드 방지 (Upsert 구현)
 
 ### 2. 분산 데이터 처리
 - Apache Spark를 활용하여 대용량 데이터를 효율적으로 처리
-- Dynamic Resource Allocation으로 필요에 따라 Executor 수를 동적으로 조정
 
 ### 3. 데이터 품질 관리
 - 결측치 처리 (imputation)
@@ -264,13 +216,3 @@ Preset.io(Apache Superset)를 활용하여 Snowflake의 ANALYSIS 스키마 데�
 - Airflow 로그: `logs/` 디렉토리
 - DAG 및 Task별로 구분된 로그 파일
 
----
-
-## 향후 개선 사항
-
-- [ ] 데이터 품질 검증 자동화 (Great Expectations 통합)
-- [ ] CI/CD 파이프라인 구축
-- [ ] 알림 시스템 추가 (Slack, Email)
-- [ ] 성능 최적화 (파티셔닝, 인덱싱)
-- [ ] 데이터 시각화 대시보드 구축 (Preset.io 연동)
-- [ ] 머신러닝 모델 통합 (사용자 행동 예측)

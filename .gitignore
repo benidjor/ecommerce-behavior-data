@@ -1,4 +1,5 @@
 data/
+archives/
 __pycache__/
 logs/
 .env
